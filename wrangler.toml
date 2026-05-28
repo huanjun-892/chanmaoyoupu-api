@@ -1,0 +1,12 @@
+name = "chanmaoyoupu-api"
+main = "src/index.ts"
+compatibility_date = "2024-01-01"
+
+[env.production]
+name = "chanmaoyoupu-api"
+route = { pattern = "api.chanmaoyoupu.com", zone_name = "chanmaoyoupu.com" }
+
+[[d1_databases]]
+binding = "DB"
+database_name = "chanmaoyoupu"
+database_id = "YOUR_D1_DATABASE_ID"
