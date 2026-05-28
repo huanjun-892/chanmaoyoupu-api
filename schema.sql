@@ -3,8 +3,10 @@ CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   email TEXT UNIQUE NOT NULL,
   password_hash TEXT NOT NULL,
-  nickname TEXT DEFAULT '',
+  nickname TEXT UNIQUE NOT NULL DEFAULT '',
   avatar_url TEXT DEFAULT '',
+  phone TEXT DEFAULT '',
+  birthday TEXT DEFAULT '',
   created_at TEXT DEFAULT (datetime('now'))
 );
 
@@ -40,7 +42,7 @@ CREATE TABLE IF NOT EXISTS favorites (
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
--- 创建索引优化查询性能
 CREATE INDEX IF NOT EXISTS idx_likes_recipe_slug ON likes(recipe_slug);
 CREATE INDEX IF NOT EXISTS idx_favorites_recipe_slug ON favorites(recipe_slug);
 CREATE INDEX IF NOT EXISTS idx_oauth_provider ON oauth_connections(provider, provider_user_id);
+CREATE INDEX IF NOT EXISTS idx_users_nickname ON users(nickname);
