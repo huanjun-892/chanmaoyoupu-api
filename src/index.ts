@@ -1,3 +1,5 @@
+import { handleContentRequest } from './content';
+import { handleAdminInit } from './migrate';
 /**
  * Cloudflare Workers - 馋猫有谱 API
  * 包含用户认证、点赞、收藏、排行榜功能
@@ -375,6 +377,15 @@ export default {
       if (path === '/api/rankings/likes' && request.method === 'GET') return await handleLikesRanking(request, env);
       if (path === '/api/rankings/favorites' && request.method === 'GET') return await handleFavoritesRanking(request, env);
       if (path === '/api/health') return jsonResponse({ success: true, data: { status: 'ok', timestamp: new Date().toISOString() } });
+      // Admin routes
+      if (path === '/api/admin/init' && request.method === 'POST') return await handleAdminInit(request, env);
+
+      // Content API routes
+      if (path.startsWith('/api/content/')) {
+        const contentResponse = await handleContentRequest(path, request, env);
+        if (contentResponse) return contentResponse;
+      }
+
       return jsonResponse({ success: false, error: '未找到该接口' }, 404);
     } catch (err: any) {
       console.error('API Error:', err);

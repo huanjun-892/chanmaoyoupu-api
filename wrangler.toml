@@ -10,3 +10,6 @@ route = { pattern = "api.chanmaoyoupu.com", zone_name = "chanmaoyoupu.com" }
 binding = "DB"
 database_name = "chanmaoyoupu"
 database_id = "d798b070-8a77-4b5b-a0d4-95cd8f57992e"
+
+[vars]
+ADMIN_SECRET = "cmpy2024secret"
