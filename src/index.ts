@@ -146,7 +146,7 @@ async function handleRegister(request: Request, env: Env): Promise<Response> {
   if (!body?.email || !body?.password) return jsonResponse({ success: false, error: '邮箱和密码不能为空' }, 400);
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(body.email)) return jsonResponse({ success: false, error: '邮箱格式不正确' }, 400);
   if (body.password.length < 6) return jsonResponse({ success: false, error: '密码至少6位' }, 400);
-  if (body.phone && !/^1[3-9]\d{9}$/.test(body.phone)) return jsonResponse({ success: false, error: '手机号格式不正确' }, 400);
+  if (body.phone && !/^1\d{10}$/.test(body.phone)) return jsonResponse({ success: false, error: '手机号格式不正确' }, 400);
   if (body.birthday && !/^\d{4}-\d{2}-\d{2}$/.test(body.birthday)) return jsonResponse({ success: false, error: '生日格式应为YYYY-MM-DD' }, 400);
   
   const existingUser = await env.DB.prepare('SELECT id FROM users WHERE email = ?').bind(body.email).first();
@@ -245,6 +245,27 @@ async function handleUpdateProfile(request: Request, env: Env): Promise<Response
   return jsonResponse({ success: true, data: user });
 }
 
+
+
+// ==================== 修改密码 ====================
+async function handleChangePassword(request: Request, env: Env): Promise<Response> {
+  const auth = await authenticateRequest(request, env);
+  if (!auth) return jsonResponse({ success: false, error: '未登录' }, 401);
+  
+  const body = await parseJson<{ old_password: string; new_password: string }>(request);
+  if (!body?.old_password || !body?.new_password) return jsonResponse({ success: false, error: '请提供当前密码和新密码' }, 400);
+  if (body.new_password.length < 6) return jsonResponse({ success: false, error: '新密码至少6位' }, 400);
+  
+  const user = await env.DB.prepare('SELECT password_hash FROM users WHERE id = ?').bind(auth.userId).first();
+  if (!user) return jsonResponse({ success: false, error: '用户不存在' }, 404);
+  
+  const valid = await verifyPassword(body.old_password, user.password_hash as string);
+  if (!valid) return jsonResponse({ success: false, error: '当前密码不正确' }, 400);
+  
+  const newHash = await hashPassword(body.new_password);
+  await env.DB.prepare('UPDATE users SET password_hash = ? WHERE id = ?').bind(newHash, auth.userId).run();
+  return jsonResponse({ success: true, data: { success: true } });
+}
 // ==================== OAuth预留 ====================
 async function handleOAuth(request: Request, env: Env, provider: string): Promise<Response> {
   if (!['wechat', 'douyin', 'kuaishou'].includes(provider)) return jsonResponse({ success: false, error: '不支持的OAuth提供商' }, 400);
@@ -339,6 +360,7 @@ export default {
       if (path === '/api/auth/login' && request.method === 'POST') return await handleLogin(request, env);
       if (path === '/api/auth/me' && request.method === 'GET') return await handleGetMe(request, env);
       if (path === '/api/auth/profile' && request.method === 'PUT') return await handleUpdateProfile(request, env);
+      if (path === '/api/auth/change-password' && request.method === 'POST') return await handleChangePassword(request, env);
       const oauthMatch = path.match(/^\/api\/oauth\/(\w+)$/);
       if (oauthMatch && request.method === 'POST') return await handleOAuth(request, env, oauthMatch[1]);
       const likeMatch = path.match(/^\/api\/recipes\/([^/]+)\/like$/);
