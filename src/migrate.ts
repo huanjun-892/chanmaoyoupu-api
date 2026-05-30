@@ -61,7 +61,25 @@ export async function handleAdminInit(request: Request, env: Env): Promise<Respo
     // Step 2: Check if data already exists
     const existing = await env.DB.prepare('SELECT COUNT(*) as count FROM cuisines').first() as any;
     if (existing && existing.count > 0) {
-      results.push("Data already exists (" + existing.count + " cuisines). Skipping seed.");
+      // Always update cover URLs (e.g., .svg -> .jpg migration)
+      const coverUpdates = [
+        { id: 1, cover_url: '/images/cuisines/chuan.jpg' },
+        { id: 2, cover_url: '/images/cuisines/yue.jpg' },
+        { id: 3, cover_url: '/images/cuisines/xiang.jpg' },
+        { id: 4, cover_url: '/images/cuisines/zhe.jpg' },
+        { id: 5, cover_url: '/images/cuisines/lu.jpg' },
+        { id: 6, cover_url: '/images/cuisines/su.jpg' },
+        { id: 7, cover_url: '/images/cuisines/min.jpg' },
+        { id: 8, cover_url: '/images/cuisines/hui.jpg' },
+        { id: 9, cover_url: '/images/cuisines/dongbei.jpg' },
+        { id: 10, cover_url: '/images/cuisines/riliao.jpg' },
+        { id: 11, cover_url: '/images/cuisines/jianzhi.jpg' },
+        { id: 12, cover_url: '/images/cuisines/ertong.jpg' },
+      ];
+      for (const c of coverUpdates) {
+        await env.DB.prepare('UPDATE cuisines SET cover_url = ? WHERE id = ?').bind(c.cover_url, c.id).run();
+      }
+      results.push("Updated cover URLs for " + coverUpdates.length + " cuisines");
       return jsonResponse({ success: true, data: results });
     }
 
@@ -70,22 +88,27 @@ export async function handleAdminInit(request: Request, env: Env): Promise<Respo
 
     // Cuisines
     const cuisines = [
-      { id: 1, name: '川菜', slug: 'chuan-cai', description: '麻辣鲜香，百菜百味', cover_url: '/images/cuisines/chuan.svg', sort: 1 },
-      { id: 2, name: '粤菜', slug: 'yue-cai', description: '清鲜嫩滑，食不厌精', cover_url: '/images/cuisines/yue.svg', sort: 2 },
-      { id: 3, name: '湘菜', slug: 'xiang-cai', description: '香辣浓烈，滋味悠长', cover_url: '/images/cuisines/xiang.svg', sort: 3 },
-      { id: 4, name: '浙菜', slug: 'zhe-cai', description: '清鲜脆嫩，原汁原味', cover_url: '/images/cuisines/zhe.svg', sort: 4 },
-      { id: 5, name: '鲁菜', slug: 'lu-cai', description: '咸鲜为主，醇厚大气', cover_url: '/images/cuisines/lu.svg', sort: 5 },
-      { id: 6, name: '苏菜', slug: 'su-cai', description: '甜咸适中，酥烂可口', cover_url: '/images/cuisines/su.svg', sort: 6 },
-      { id: 7, name: '闽菜', slug: 'min-cai', description: '鲜香清甜，汤菜居多', cover_url: '/images/cuisines/min.svg', sort: 7 },
-      { id: 8, name: '徽菜', slug: 'hui-cai', description: '重油重色，火功讲究', cover_url: '/images/cuisines/hui.svg', sort: 8 },
-      { id: 9, name: '东北菜', slug: 'dongbei-cai', description: '量大实在，浓香醇厚', cover_url: '/images/cuisines/dongbei.svg', sort: 9 },
-      { id: 10, name: '日料', slug: 'ri-liao', description: '精致细腻，尊重食材本味', cover_url: '/images/cuisines/riliao.svg', sort: 10 },
-      { id: 11, name: '减脂餐', slug: 'jianzhi-can', description: '低卡美味，健康搭配', cover_url: '/images/cuisines/jianzhi.svg', sort: 11 },
-      { id: 12, name: '儿童餐', slug: 'ertong-can', description: '营养均衡，色彩缤纷', cover_url: '/images/cuisines/ertong.svg', sort: 12 },
+      { id: 1, name: '川菜', slug: 'chuan-cai', description: '麻辣鲜香，百菜百味', cover_url: '/images/cuisines/chuan.jpg', sort: 1 },
+      { id: 2, name: '粤菜', slug: 'yue-cai', description: '清鲜嫩滑，食不厌精', cover_url: '/images/cuisines/yue.jpg', sort: 2 },
+      { id: 3, name: '湘菜', slug: 'xiang-cai', description: '香辣浓烈，滋味悠长', cover_url: '/images/cuisines/xiang.jpg', sort: 3 },
+      { id: 4, name: '浙菜', slug: 'zhe-cai', description: '清鲜脆嫩，原汁原味', cover_url: '/images/cuisines/zhe.jpg', sort: 4 },
+      { id: 5, name: '鲁菜', slug: 'lu-cai', description: '咸鲜为主，醇厚大气', cover_url: '/images/cuisines/lu.jpg', sort: 5 },
+      { id: 6, name: '苏菜', slug: 'su-cai', description: '甜咸适中，酥烂可口', cover_url: '/images/cuisines/su.jpg', sort: 6 },
+      { id: 7, name: '闽菜', slug: 'min-cai', description: '鲜香清甜，汤菜居多', cover_url: '/images/cuisines/min.jpg', sort: 7 },
+      { id: 8, name: '徽菜', slug: 'hui-cai', description: '重油重色，火功讲究', cover_url: '/images/cuisines/hui.jpg', sort: 8 },
+      { id: 9, name: '东北菜', slug: 'dongbei-cai', description: '量大实在，浓香醇厚', cover_url: '/images/cuisines/dongbei.jpg', sort: 9 },
+      { id: 10, name: '日料', slug: 'ri-liao', description: '精致细腻，尊重食材本味', cover_url: '/images/cuisines/riliao.jpg', sort: 10 },
+      { id: 11, name: '减脂餐', slug: 'jianzhi-can', description: '低卡美味，健康搭配', cover_url: '/images/cuisines/jianzhi.jpg', sort: 11 },
+      { id: 12, name: '儿童餐', slug: 'ertong-can', description: '营养均衡，色彩缤纷', cover_url: '/images/cuisines/ertong.jpg', sort: 12 },
     ];
     for (const c of cuisines) {
       await env.DB.prepare('INSERT OR IGNORE INTO cuisines (id, name, slug, description, cover_url, sort_order) VALUES (?, ?, ?, ?, ?, ?)')
         .bind(c.id, c.name, c.slug, c.description, c.cover_url, c.sort).run();
+    }
+    // Update cover URLs for existing cuisines (in case they changed from .svg to .jpg)
+    for (const c of cuisines) {
+      await env.DB.prepare("UPDATE cuisines SET cover_url = ? WHERE id = ?")
+        .bind(c.cover_url, c.id).run();
     }
     results.push("Inserted " + cuisines.length + " cuisines");
 
