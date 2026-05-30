@@ -339,15 +339,130 @@ async function handleGetMyFavorites(request: Request, env: Env): Promise<Respons
 
 // ==================== 排行榜 ====================
 async function handleLikesRanking(request: Request, env: Env): Promise<Response> {
-  const limit = parseInt(new URL(request.url).searchParams.get('limit') || '20');
-  const ranking = await env.DB.prepare('SELECT recipe_slug, COUNT(*) as like_count FROM likes GROUP BY recipe_slug ORDER BY like_count DESC LIMIT ?').bind(limit).all();
-  return jsonResponse({ success: true, data: ranking.results });
+  const url = new URL(request.url);
+  const limit = parseInt(url.searchParams.get('limit') || '50');
+  const cuisine = url.searchParams.get('cuisine') || '';
+  const region = url.searchParams.get('region') || '';
+  const tag = url.searchParams.get('tag') || '';
+
+  let query = 'SELECT l.recipe_slug, COUNT(*) as like_count FROM likes l';
+  const conditions: string[] = [];
+  const params: any[] = [];
+
+  if (cuisine || region || tag) {
+    query += ' JOIN recipes r ON l.recipe_slug = r.slug';
+  }
+  if (region) {
+    query += ' JOIN recipe_regions rr ON r.id = rr.recipe_id JOIN regions rg ON rr.region_id = rg.id';
+  }
+  if (tag) {
+    query += ' JOIN recipe_tags rt ON r.id = rt.recipe_id JOIN tags t ON rt.tag_id = t.id';
+  }
+
+  if (cuisine) {
+    query += ' JOIN cuisines c ON r.cuisine_id = c.id';
+    conditions.push('c.name = ?');
+    params.push(cuisine);
+  }
+  if (region) {
+    conditions.push('rg.name = ?');
+    params.push(region);
+  }
+  if (tag) {
+    conditions.push('t.name = ?');
+    params.push(tag);
+  }
+
+  if (conditions.length > 0) {
+    query += ' WHERE ' + conditions.join(' AND ');
+  }
+  query += ' GROUP BY l.recipe_slug ORDER BY like_count DESC LIMIT ?';
+  params.push(limit);
+
+  const stmt = params.length > 0 ? env.DB.prepare(query).bind(...params) : env.DB.prepare(query);
+  const ranking = await stmt.all();
+
+  // Enrich with recipe metadata
+  const enriched = await Promise.all(ranking.results.map(async (item: any) => {
+    const recipe = await env.DB.prepare('SELECT r.id, r.title, r.slug, r.cover_url, r.difficulty, r.cook_time FROM recipes r WHERE r.slug = ?').bind(item.recipe_slug).first();
+    let cuisineInfo = null;
+    let regions: string[] = [];
+    let tags: string[] = [];
+    if (recipe) {
+      const c = await env.DB.prepare('SELECT cu.name FROM cuisines cu WHERE cu.id = (SELECT cuisine_id FROM recipes WHERE id = ?)').bind(recipe.id).first();
+      if (c) cuisineInfo = c.name;
+      const rRes = await env.DB.prepare('SELECT rg.name FROM regions rg JOIN recipe_regions rr ON rg.id = rr.region_id WHERE rr.recipe_id = ?').bind(recipe.id).all();
+      regions = rRes.results.map((x: any) => x.name);
+      const tRes = await env.DB.prepare('SELECT tg.name FROM tags tg JOIN recipe_tags tt ON tg.id = tt.tag_id WHERE tt.recipe_id = ?').bind(recipe.id).all();
+      tags = tRes.results.map((x: any) => x.name);
+    }
+    return { ...item, title: recipe?.title || '', cover_url: recipe?.cover_url || '', difficulty: recipe?.difficulty || '', cook_time: recipe?.cook_time || '', cuisine: cuisineInfo, regions, tags };
+  }));
+
+  return jsonResponse({ success: true, data: enriched });
 }
 
 async function handleFavoritesRanking(request: Request, env: Env): Promise<Response> {
-  const limit = parseInt(new URL(request.url).searchParams.get('limit') || '20');
-  const ranking = await env.DB.prepare('SELECT recipe_slug, COUNT(*) as favorite_count FROM favorites GROUP BY recipe_slug ORDER BY favorite_count DESC LIMIT ?').bind(limit).all();
-  return jsonResponse({ success: true, data: ranking.results });
+  const url = new URL(request.url);
+  const limit = parseInt(url.searchParams.get('limit') || '50');
+  const cuisine = url.searchParams.get('cuisine') || '';
+  const region = url.searchParams.get('region') || '';
+  const tag = url.searchParams.get('tag') || '';
+
+  let query = 'SELECT f.recipe_slug, COUNT(*) as favorite_count FROM favorites f';
+  const conditions: string[] = [];
+  const params: any[] = [];
+
+  if (cuisine || region || tag) {
+    query += ' JOIN recipes r ON f.recipe_slug = r.slug';
+  }
+  if (region) {
+    query += ' JOIN recipe_regions rr ON r.id = rr.recipe_id JOIN regions rg ON rr.region_id = rg.id';
+  }
+  if (tag) {
+    query += ' JOIN recipe_tags rt ON r.id = rt.recipe_id JOIN tags t ON rt.tag_id = t.id';
+  }
+
+  if (cuisine) {
+    query += ' JOIN cuisines c ON r.cuisine_id = c.id';
+    conditions.push('c.name = ?');
+    params.push(cuisine);
+  }
+  if (region) {
+    conditions.push('rg.name = ?');
+    params.push(region);
+  }
+  if (tag) {
+    conditions.push('t.name = ?');
+    params.push(tag);
+  }
+
+  if (conditions.length > 0) {
+    query += ' WHERE ' + conditions.join(' AND ');
+  }
+  query += ' GROUP BY f.recipe_slug ORDER BY favorite_count DESC LIMIT ?';
+  params.push(limit);
+
+  const stmt = params.length > 0 ? env.DB.prepare(query).bind(...params) : env.DB.prepare(query);
+  const ranking = await stmt.all();
+
+  const enriched = await Promise.all(ranking.results.map(async (item: any) => {
+    const recipe = await env.DB.prepare('SELECT r.id, r.title, r.slug, r.cover_url, r.difficulty, r.cook_time FROM recipes r WHERE r.slug = ?').bind(item.recipe_slug).first();
+    let cuisineInfo = null;
+    let regions: string[] = [];
+    let tags: string[] = [];
+    if (recipe) {
+      const c = await env.DB.prepare('SELECT cu.name FROM cuisines cu WHERE cu.id = (SELECT cuisine_id FROM recipes WHERE id = ?)').bind(recipe.id).first();
+      if (c) cuisineInfo = c.name;
+      const rRes = await env.DB.prepare('SELECT rg.name FROM regions rg JOIN recipe_regions rr ON rg.id = rr.region_id WHERE rr.recipe_id = ?').bind(recipe.id).all();
+      regions = rRes.results.map((x: any) => x.name);
+      const tRes = await env.DB.prepare('SELECT tg.name FROM tags tg JOIN recipe_tags tt ON tg.id = tt.tag_id WHERE tt.recipe_id = ?').bind(recipe.id).all();
+      tags = tRes.results.map((x: any) => x.name);
+    }
+    return { ...item, title: recipe?.title || '', cover_url: recipe?.cover_url || '', difficulty: recipe?.difficulty || '', cook_time: recipe?.cook_time || '', cuisine: cuisineInfo, regions, tags };
+  }));
+
+  return jsonResponse({ success: true, data: enriched });
 }
 
 // ==================== 主入口 ====================
