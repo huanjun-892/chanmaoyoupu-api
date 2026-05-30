@@ -378,6 +378,7 @@ export default {
       if (path === '/api/rankings/favorites' && request.method === 'GET') return await handleFavoritesRanking(request, env);
       if (path === '/api/health') return jsonResponse({ success: true, data: { status: 'ok', timestamp: new Date().toISOString() } });
       // Admin routes
+      if (path === '/api/admin/import-knowledge' && request.method === 'POST') return await handleImportKnowledge(request, env);
       if (path === '/api/admin/init' && request.method === 'POST') return await handleAdminInit(request, env);
 
       // Content API routes
@@ -393,3 +394,45 @@ export default {
     }
   },
 };
+
+// ==================== 批量导入知识库 ====================
+async function handleImportKnowledge(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const secret = url.searchParams.get('secret') || request.headers.get('X-Admin-Secret') || '';
+  if (secret !== 'cmpy2024secret') return jsonResponse({ success: false, error: 'Unauthorized' }, 401);
+
+  const body = await parseJson<{ entries: Array<{ id?: number; title: string; slug: string; category: string; content: string }> }>(request);
+  if (!body?.entries || !Array.isArray(body.entries)) return jsonResponse({ success: false, error: '请提供entries数组' }, 400);
+
+  const results: string[] = [];
+  let inserted = 0;
+  let skipped = 0;
+
+  for (const entry of body.entries) {
+    if (!entry.title || !entry.slug || !entry.category || !entry.content) {
+      results.push(`跳过无效条目: ${entry.slug || 'no-slug'}`);
+      skipped++;
+      continue;
+    }
+    try {
+      const existing = await env.DB.prepare('SELECT id FROM knowledge_entries WHERE slug = ?').bind(entry.slug).first();
+      if (existing) {
+        // Update existing
+        await env.DB.prepare('UPDATE knowledge_entries SET title = ?, category = ?, content = ? WHERE slug = ?')
+          .bind(entry.title, entry.category, entry.content, entry.slug).run();
+        results.push(`更新: ${entry.slug}`);
+      } else {
+        // Insert new
+        await env.DB.prepare('INSERT INTO knowledge_entries (title, slug, category, content) VALUES (?, ?, ?, ?)')
+          .bind(entry.title, entry.slug, entry.category, entry.content).run();
+        results.push(`新增: ${entry.slug}`);
+      }
+      inserted++;
+    } catch (err: any) {
+      results.push(`错误: ${entry.slug} - ${err.message}`);
+      skipped++;
+    }
+  }
+
+  return jsonResponse({ success: true, data: { inserted, skipped, details: results } });
+}
