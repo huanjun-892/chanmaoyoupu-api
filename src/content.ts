@@ -116,8 +116,8 @@ async function buildRecipeObject(env: Env, recipe: any): Promise<any> {
     methods: methods.results.map((m: any) => ({ name: m.name })),
     tags: tags.results.map((t: any) => ({ name: t.name, slug: t.slug, icon: t.icon })),
     regions: regions.results.map((r: any) => ({ name: r.name })),
-    ingredients: ingredients.results.map((ing: any) => ({ name: ing.name, amount: ing.amount })),
-    steps: steps.results.map((s: any) => ({ stepNumber: s.step_number, text: s.text })),
+    ingredients: ingredients.results.map((ing: any) => ({ name: ing.name, amount: ing.amount, isMain: true })),
+    steps: steps.results.map((s: any) => ({ stepNumber: s.step_number, description: s.text })),
     cover: recipe.cover_url ? {
       url: recipe.cover_url,
       formats: { small: { url: recipe.cover_url } }
