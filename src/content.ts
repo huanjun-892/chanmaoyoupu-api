@@ -337,7 +337,7 @@ async function handleGetIngredientBySlug(env: Env, slug: string): Promise<Respon
 async function handleSearch(env: Env, request: Request): Promise<Response> {
   const url = new URL(request.url);
   const q = url.searchParams.get('q') || '';
-  const type = url.searchParams.get('type') || 'all'; // all, recipes, knowledge, ingredients
+  const type = url.searchParams.get('type') || 'all'; // all, recipes, knowledge, secrets, ingredients
   
   if (!q || q.trim().length === 0) {
     return jsonResponse({ success: true, data: { recipes: [], knowledge: [], ingredients: [], total: 0 } });
@@ -362,10 +362,34 @@ async function handleSearch(env: Env, request: Request): Promise<Response> {
     }));
   }
   
+  if (type === 'secrets') {
+    const secrets = await env.DB.prepare(
+      'SELECT id, title, slug, category FROM knowledge_entries WHERE (title LIKE ? OR content LIKE ?) AND published = 1 AND category = ? ORDER BY id ASC LIMIT 20'
+    ).bind(keyword, keyword, 'secret').all();
+    results.secrets = secrets.results.map((s: any) => ({
+      id: s.id,
+      title: s.title,
+      slug: s.slug,
+      category: s.category,
+      type: 'secret',
+    }));
+  }
+
   if (type === 'all' || type === 'knowledge') {
     const knowledge = await env.DB.prepare(
       'SELECT id, title, slug, category FROM knowledge_entries WHERE (title LIKE ? OR content LIKE ?) AND published = 1 AND category != ? ORDER BY id ASC LIMIT 20'
     ).bind(keyword, keyword, 'secret').all();
+
+    const secrets = await env.DB.prepare(
+      'SELECT id, title, slug, category FROM knowledge_entries WHERE (title LIKE ? OR content LIKE ?) AND published = 1 AND category = ? ORDER BY id ASC LIMIT 20'
+    ).bind(keyword, keyword, 'secret').all();
+    results.secrets = secrets.results.map((s: any) => ({
+      id: s.id,
+      title: s.title,
+      slug: s.slug,
+      category: s.category,
+      type: 'secret',
+    }));
     results.knowledge = knowledge.results.map((k: any) => ({
       id: k.id,
       title: k.title,
@@ -390,6 +414,6 @@ async function handleSearch(env: Env, request: Request): Promise<Response> {
     }));
   }
   
-  results.total = results.recipes.length + results.knowledge.length + results.ingredients.length;
+  results.total = results.recipes.length + results.knowledge.length + (results.secrets?.length || 0) + results.ingredients.length;
   return jsonResponse({ success: true, data: results });
 }
