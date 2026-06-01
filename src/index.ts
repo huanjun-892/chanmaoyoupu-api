@@ -498,6 +498,7 @@ export default {
       if (path === '/api/admin/import-recipes' && request.method === 'POST') return await handleImportRecipes(request, env);
       if (path === '/api/admin/reset-recipes' && request.method === 'POST') return await handleResetRecipes(request, env);
       if (path === '/api/admin/import-ingredients' && request.method === 'POST') return await handleImportIngredients(request, env);
+      if (path === '/api/admin/delete-ingredient' && request.method === 'POST') return await handleDeleteIngredient(request, env);
       if (path === '/api/admin/init' && request.method === 'POST') return await handleAdminInit(request, env);
 
       // Content API routes
@@ -819,4 +820,26 @@ async function handleImportIngredients(request: Request, env: Env): Promise<Resp
   }
 
   return jsonResponse({ success: true, data: { inserted, updated, skipped, details: results } });
+}
+
+
+async function handleDeleteIngredient(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const secret = url.searchParams.get('secret') || request.headers.get('X-Admin-Secret') || '';
+  if (secret !== 'cmpy2024secret') return jsonResponse({ success: false, error: 'Unauthorized' }, 401);
+
+  const body = await parseJson<{ slug?: string; id?: number }>(request);
+  if (!body?.slug && !body?.id) return jsonResponse({ success: false, error: '请提供slug或id' }, 400);
+
+  try {
+    let result;
+    if (body.slug) {
+      result = await env.DB.prepare('DELETE FROM ingredients WHERE slug = ?').bind(body.slug).run();
+    } else {
+      result = await env.DB.prepare('DELETE FROM ingredients WHERE id = ?').bind(body.id).run();
+    }
+    return jsonResponse({ success: true, deleted: result.meta.changes });
+  } catch (err: any) {
+    return jsonResponse({ success: false, error: err.message }, 500);
+  }
 }
