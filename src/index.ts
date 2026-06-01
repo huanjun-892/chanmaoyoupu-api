@@ -502,6 +502,7 @@ export default {
       if (path === '/api/admin/import-cuisines' && request.method === 'POST') return await handleImportCuisines(request, env);
       if (path === '/api/admin/import-tags' && request.method === 'POST') return await handleImportTags(request, env);
       if (path === '/api/admin/delete-recipe' && request.method === 'POST') return await handleDeleteRecipe(request, env);
+      if (path === '/api/admin/delete-tag' && request.method === 'POST') return await handleDeleteTag(request, env);
       if (path === '/api/admin/init' && request.method === 'POST') return await handleAdminInit(request, env);
 
       // Content API routes
@@ -872,6 +873,29 @@ async function handleDeleteRecipe(request: Request, env: Env): Promise<Response>
     await env.DB.prepare('DELETE FROM recipe_regions WHERE recipe_id = ?').bind(recipeId).run();
     await env.DB.prepare('DELETE FROM recipes WHERE id = ?').bind(recipeId).run();
     return jsonResponse({ success: true, deleted: recipeId });
+  } catch (err: any) {
+    return jsonResponse({ success: false, error: err.message }, 500);
+  }
+}
+
+
+// ==================== 删除标签 ====================
+async function handleDeleteTag(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const secret = url.searchParams.get('secret') || request.headers.get('X-Admin-Secret') || '';
+  if (secret !== 'cmpy2024secret') return jsonResponse({ success: false, error: 'Unauthorized' }, 401);
+  const body = await parseJson<{ id?: number; slug?: string }>(request);
+  if (!body?.id && !body?.slug) return jsonResponse({ success: false, error: '请提供id或slug' }, 400);
+  try {
+    let tagId = body.id;
+    if (!tagId && body.slug) {
+      const row = await env.DB.prepare('SELECT id FROM tags WHERE slug = ?').bind(body.slug).first() as any;
+      if (!row) return jsonResponse({ success: false, error: '标签不存在' }, 404);
+      tagId = row.id;
+    }
+    await env.DB.prepare('DELETE FROM recipe_tags WHERE tag_id = ?').bind(tagId).run();
+    await env.DB.prepare('DELETE FROM tags WHERE id = ?').bind(tagId).run();
+    return jsonResponse({ success: true, deleted: tagId });
   } catch (err: any) {
     return jsonResponse({ success: false, error: err.message }, 500);
   }
