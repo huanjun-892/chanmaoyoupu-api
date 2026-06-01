@@ -500,6 +500,7 @@ export default {
       if (path === '/api/admin/import-ingredients' && request.method === 'POST') return await handleImportIngredients(request, env);
       if (path === '/api/admin/delete-ingredient' && request.method === 'POST') return await handleDeleteIngredient(request, env);
       if (path === '/api/admin/import-cuisines' && request.method === 'POST') return await handleImportCuisines(request, env);
+      if (path === '/api/admin/import-tags' && request.method === 'POST') return await handleImportTags(request, env);
       if (path === '/api/admin/init' && request.method === 'POST') return await handleAdminInit(request, env);
 
       // Content API routes
@@ -845,6 +846,35 @@ async function handleDeleteIngredient(request: Request, env: Env): Promise<Respo
   }
 }
 
+
+
+// ==================== 批量导入标签 ====================
+async function handleImportTags(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const secret = url.searchParams.get('secret') || request.headers.get('X-Admin-Secret') || '';
+  if (secret !== 'cmpy2024secret') return jsonResponse({ success: false, error: 'Unauthorized' }, 401);
+  const body = await parseJson<{ tags: Array<{ name: string; slug: string; icon?: string }> }>(request);
+  if (!body?.tags || !Array.isArray(body.tags)) return jsonResponse({ success: false, error: '请提供tags数组' }, 400);
+  const results: any[] = [];
+  for (const t of body.tags) {
+    if (!t.name || !t.slug) continue;
+    try {
+      const existing = await env.DB.prepare('SELECT id FROM tags WHERE slug = ?').bind(t.slug).first() as any;
+      if (existing) {
+        await env.DB.prepare('UPDATE tags SET name = ?, icon = ? WHERE slug = ?').bind(t.name, t.icon || '', t.slug).run();
+        results.push({ name: t.name, status: 'updated', id: existing.id });
+      } else {
+        const maxId = await env.DB.prepare('SELECT MAX(id) as maxId FROM tags').first() as any;
+        const nextId = (maxId?.maxId || 0) + 1;
+        await env.DB.prepare('INSERT INTO tags (id, name, slug, icon, sort_order) VALUES (?, ?, ?, ?, ?)').bind(nextId, t.name, t.slug, t.icon || '', nextId).run();
+        results.push({ name: t.name, status: 'inserted', id: nextId });
+      }
+    } catch (err: any) {
+      results.push({ name: t.name, status: 'error', message: err.message });
+    }
+  }
+  return jsonResponse({ success: true, results });
+}
 
 async function handleImportCuisines(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
