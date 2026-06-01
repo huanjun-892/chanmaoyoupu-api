@@ -850,7 +850,7 @@ async function handleImportCuisines(request: Request, env: Env): Promise<Respons
   const url = new URL(request.url);
   const secret = url.searchParams.get('secret') || request.headers.get('X-Admin-Secret') || '';
   if (secret !== 'cmpy2024secret') return jsonResponse({ success: false, error: 'Unauthorized' }, 401);
-  const body = await parseJson<{ cuisines: Array<{ name: string; slug: string; description?: string }> }>(request);
+  const body = await parseJson<{ cuisines: Array<{ id?: number; name: string; slug: string; description?: string; cover_url?: string; sort_order?: number }> }>(request);
   if (!body?.cuisines || !Array.isArray(body.cuisines)) return jsonResponse({ success: false, error: '请提供cuisines数组' }, 400);
   const results: any[] = [];
   for (const c of body.cuisines) {
@@ -858,8 +858,8 @@ async function handleImportCuisines(request: Request, env: Env): Promise<Respons
     try {
       await env.DB.prepare('DELETE FROM cuisines WHERE slug = ?').bind(c.slug).run();
       const maxId = await env.DB.prepare('SELECT MAX(id) as maxId FROM cuisines').first() as any;
-      const nextId = (maxId?.maxId || 0) + 1;
-      await env.DB.prepare('INSERT INTO cuisines (id, name, slug, description) VALUES (?, ?, ?, ?)').bind(nextId, c.name, c.slug, c.description || '').run();
+      const nextId = c.id || (maxId?.maxId || 0) + 1;
+      await env.DB.prepare('INSERT INTO cuisines (id, name, slug, description, cover_url, sort_order) VALUES (?, ?, ?, ?, ?, ?)').bind(nextId, c.name, c.slug, c.description || '', c.cover_url || '', c.sort_order || nextId).run();
       results.push({ name: c.name, status: 'inserted', id: nextId });
     } catch (err: any) {
       results.push({ name: c.name, status: 'error', message: err.message });
