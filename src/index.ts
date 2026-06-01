@@ -499,6 +499,7 @@ export default {
       if (path === '/api/admin/reset-recipes' && request.method === 'POST') return await handleResetRecipes(request, env);
       if (path === '/api/admin/import-ingredients' && request.method === 'POST') return await handleImportIngredients(request, env);
       if (path === '/api/admin/delete-ingredient' && request.method === 'POST') return await handleDeleteIngredient(request, env);
+      if (path === '/api/admin/import-cuisines' && request.method === 'POST') return await handleImportCuisines(request, env);
       if (path === '/api/admin/init' && request.method === 'POST') return await handleAdminInit(request, env);
 
       // Content API routes
@@ -842,4 +843,27 @@ async function handleDeleteIngredient(request: Request, env: Env): Promise<Respo
   } catch (err: any) {
     return jsonResponse({ success: false, error: err.message }, 500);
   }
+}
+
+
+async function handleImportCuisines(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const secret = url.searchParams.get('secret') || request.headers.get('X-Admin-Secret') || '';
+  if (secret !== 'cmpy2024secret') return jsonResponse({ success: false, error: 'Unauthorized' }, 401);
+  const body = await parseJson<{ cuisines: Array<{ name: string; slug: string; description?: string }> }>(request);
+  if (!body?.cuisines || !Array.isArray(body.cuisines)) return jsonResponse({ success: false, error: '请提供cuisines数组' }, 400);
+  const results: any[] = [];
+  for (const c of body.cuisines) {
+    if (!c.name || !c.slug) continue;
+    try {
+      await env.DB.prepare('DELETE FROM cuisines WHERE slug = ?').bind(c.slug).run();
+      const maxId = await env.DB.prepare('SELECT MAX(id) as maxId FROM cuisines').first() as any;
+      const nextId = (maxId?.maxId || 0) + 1;
+      await env.DB.prepare('INSERT INTO cuisines (id, name, slug, description) VALUES (?, ?, ?, ?)').bind(nextId, c.name, c.slug, c.description || '').run();
+      results.push({ name: c.name, status: 'inserted', id: nextId });
+    } catch (err: any) {
+      results.push({ name: c.name, status: 'error', message: err.message });
+    }
+  }
+  return jsonResponse({ success: true, results });
 }
