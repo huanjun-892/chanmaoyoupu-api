@@ -496,6 +496,7 @@ export default {
       if (path === '/api/admin/import-knowledge' && request.method === 'POST') return await handleImportKnowledge(request, env);
       if (path === '/api/admin/update-recipe-covers' && request.method === 'POST') return await handleUpdateRecipeCovers(request, env);
       if (path === '/api/admin/import-recipes' && request.method === 'POST') return await handleImportRecipes(request, env);
+      if (path === '/api/admin/reset-recipes' && request.method === 'POST') return await handleResetRecipes(request, env);
       if (path === '/api/admin/init' && request.method === 'POST') return await handleAdminInit(request, env);
 
       // Content API routes
@@ -554,6 +555,7 @@ async function handleImportKnowledge(request: Request, env: Env): Promise<Respon
   return jsonResponse({ success: true, data: { inserted, skipped, details: results } });
 }
 
+
 // ==================== 批量更新食谱封面 ====================
 async function handleUpdateRecipeCovers(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
@@ -592,6 +594,26 @@ async function handleUpdateRecipeCovers(request: Request, env: Env): Promise<Res
   return jsonResponse({ success: true, data: { updated, skipped, details: results } });
 }
 
+// ==================== 重置食谱数据 ====================
+async function handleResetRecipes(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const secret = url.searchParams.get('secret') || request.headers.get('X-Admin-Secret') || '';
+  if (secret !== 'cmpy2024secret') return jsonResponse({ success: false, error: 'Unauthorized' }, 401);
+
+  try {
+    // Delete all recipe-related data in correct order (respecting FK constraints)
+    await env.DB.prepare('DELETE FROM recipe_ingredients').run();
+    await env.DB.prepare('DELETE FROM recipe_steps').run();
+    await env.DB.prepare('DELETE FROM recipe_tags').run();
+    await env.DB.prepare('DELETE FROM recipe_methods').run();
+    await env.DB.prepare('DELETE FROM recipe_regions').run();
+    await env.DB.prepare('DELETE FROM recipes').run();
+    return jsonResponse({ success: true, data: { message: 'All recipe data deleted' } });
+  } catch (err: any) {
+    return jsonResponse({ success: false, error: err.message }, 500);
+  }
+}
+
 // ==================== 批量导入食谱 ====================
 async function handleImportRecipes(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
@@ -601,7 +623,7 @@ async function handleImportRecipes(request: Request, env: Env): Promise<Response
   const body = await parseJson<{ recipes: Array<any> }>(request);
   if (!body?.recipes || !Array.isArray(body.recipes)) return jsonResponse({ success: false, error: '请提供recipes数组' }, 400);
 
-  const results: string[] = [];
+  const results: any[] = [];
   let inserted = 0;
   let updated = 0;
   let skipped = 0;
@@ -613,57 +635,115 @@ async function handleImportRecipes(request: Request, env: Env): Promise<Response
       continue;
     }
     try {
-      const existing = await env.DB.prepare('SELECT id FROM recipes WHERE slug = ?').bind(recipe.slug).first();
+      // Resolve cuisine_id
+      let cuisineId: number | null = null;
+      const cuisineName = typeof recipe.cuisine === 'string' ? recipe.cuisine : recipe.cuisine?.name;
+      if (cuisineName) {
+        const c = await env.DB.prepare('SELECT id FROM cuisines WHERE name = ?').bind(cuisineName).first() as any;
+        if (c) cuisineId = c.id;
+      }
+
+      const existing = await env.DB.prepare('SELECT id FROM recipes WHERE slug = ?').bind(recipe.slug).first() as any;
+      let recipeId: number;
+
       if (existing) {
-        await env.DB.prepare('UPDATE recipes SET title = ?, description = ?, difficulty = ?, cook_time = ?, servings = ?, calories = ?, cover_url = ? WHERE slug = ?')
-          .bind(recipe.title || '', recipe.description || '', recipe.difficulty || 'easy', recipe.cook_time || 0, recipe.servings || 2, recipe.calories || 0, recipe.cover_url || null, recipe.slug).run();
-        // Update cuisine if provided
-        if (recipe.cuisine) {
-          const cuisine = await env.DB.prepare('SELECT id FROM cuisines WHERE name = ?').bind(recipe.cuisine).first();
-          if (cuisine) {
-            await env.DB.prepare('UPDATE recipes SET cuisine_id = ? WHERE slug = ?').bind(cuisine.id, recipe.slug).run();
-          }
-        }
-        // Update ingredients
-        if (recipe.ingredients && recipe.ingredients.length > 0) {
-          await env.DB.prepare('DELETE FROM recipe_ingredients WHERE recipe_slug = ?').bind(recipe.slug).run();
-          for (const ing of recipe.ingredients) {
-            await env.DB.prepare('INSERT INTO recipe_ingredients (recipe_slug, name, amount, is_main) VALUES (?, ?, ?, ?)')
-              .bind(recipe.slug, ing.name, ing.amount || '', ing.isMain ? 1 : 0).run();
-          }
-        }
-        // Update steps
-        if (recipe.steps && recipe.steps.length > 0) {
-          await env.DB.prepare('DELETE FROM recipe_steps WHERE recipe_slug = ?').bind(recipe.slug).run();
-          for (let i = 0; i < recipe.steps.length; i++) {
-            await env.DB.prepare('INSERT INTO recipe_steps (recipe_slug, step_order, description) VALUES (?, ?, ?)')
-              .bind(recipe.slug, i + 1, recipe.steps[i].description || recipe.steps[i]).run();
-          }
-        }
-        results.push({ title: recipe.title, status: 'updated', message: `更新 ID=${(existing as any).id}` });
+        // Update existing recipe
+        await env.DB.prepare(
+          'UPDATE recipes SET title = ?, description = ?, difficulty = ?, cook_time = ?, servings = ?, calories = ?, cuisine_id = ?, cover_url = ? WHERE slug = ?'
+        ).bind(
+          recipe.title,
+          recipe.description || '',
+          recipe.difficulty || 'easy',
+          recipe.cookTime || recipe.cook_time || 0,
+          recipe.servings || 2,
+          recipe.calories || 0,
+          cuisineId,
+          recipe.cover_url || recipe.cover?.url || null,
+          recipe.slug
+        ).run();
+        recipeId = existing.id;
+
+        // Clean up old related data
+        await env.DB.prepare('DELETE FROM recipe_ingredients WHERE recipe_id = ?').bind(recipeId).run();
+        await env.DB.prepare('DELETE FROM recipe_steps WHERE recipe_id = ?').bind(recipeId).run();
+        await env.DB.prepare('DELETE FROM recipe_tags WHERE recipe_id = ?').bind(recipeId).run();
+        await env.DB.prepare('DELETE FROM recipe_methods WHERE recipe_id = ?').bind(recipeId).run();
+        await env.DB.prepare('DELETE FROM recipe_regions WHERE recipe_id = ?').bind(recipeId).run();
         updated++;
       } else {
         // Insert new recipe
-        const cuisineId = recipe.cuisine ? (await env.DB.prepare('SELECT id FROM cuisines WHERE name = ?').bind(recipe.cuisine).first()) : null;
-        await env.DB.prepare('INSERT INTO recipes (title, slug, description, difficulty, cook_time, servings, calories, cuisine_id, cover_url, published) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)')
-          .bind(recipe.title, recipe.slug, recipe.description || '', recipe.difficulty || 'easy', recipe.cook_time || 0, recipe.servings || 2, recipe.calories || 0, (cuisineId as any)?.id || null, recipe.cover_url || null).run();
-        // Insert ingredients
-        if (recipe.ingredients && recipe.ingredients.length > 0) {
-          for (const ing of recipe.ingredients) {
-            await env.DB.prepare('INSERT INTO recipe_ingredients (recipe_slug, name, amount, is_main) VALUES (?, ?, ?, ?)')
-              .bind(recipe.slug, ing.name, ing.amount || '', ing.isMain ? 1 : 0).run();
-          }
-        }
-        // Insert steps
-        if (recipe.steps && recipe.steps.length > 0) {
-          for (let i = 0; i < recipe.steps.length; i++) {
-            await env.DB.prepare('INSERT INTO recipe_steps (recipe_slug, step_order, description) VALUES (?, ?, ?)')
-              .bind(recipe.slug, i + 1, recipe.steps[i].description || recipe.steps[i]).run();
-          }
-        }
-        results.push({ title: recipe.title, status: 'inserted', message: `新增` });
+        const result = await env.DB.prepare(
+          'INSERT INTO recipes (title, slug, description, difficulty, cook_time, servings, calories, cuisine_id, cover_url, published) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1) RETURNING id'
+        ).bind(
+          recipe.title,
+          recipe.slug,
+          recipe.description || '',
+          recipe.difficulty || 'easy',
+          recipe.cookTime || recipe.cook_time || 0,
+          recipe.servings || 2,
+          recipe.calories || 0,
+          cuisineId,
+          recipe.cover_url || recipe.cover?.url || null
+        ).first() as any;
+        recipeId = result.id;
         inserted++;
       }
+
+      // Insert ingredients
+      if (recipe.ingredients && recipe.ingredients.length > 0) {
+        for (let i = 0; i < recipe.ingredients.length; i++) {
+          const ing = recipe.ingredients[i];
+          await env.DB.prepare(
+            'INSERT INTO recipe_ingredients (recipe_id, name, amount, sort_order) VALUES (?, ?, ?, ?)'
+          ).bind(recipeId, ing.name, ing.amount || '', i + 1).run();
+        }
+      }
+
+      // Insert steps
+      if (recipe.steps && recipe.steps.length > 0) {
+        for (const step of recipe.steps) {
+          const stepNum = step.stepNumber || step.step_number || 0;
+          const stepText = step.description || step.text || '';
+          await env.DB.prepare(
+            'INSERT INTO recipe_steps (recipe_id, step_number, text) VALUES (?, ?, ?)'
+          ).bind(recipeId, stepNum, stepText).run();
+        }
+      }
+
+      // Insert tags (resolve by name)
+      if (recipe.tags && recipe.tags.length > 0) {
+        for (const t of recipe.tags) {
+          const tagName = typeof t === 'string' ? t : t.name;
+          const tagRow = await env.DB.prepare('SELECT id FROM tags WHERE name = ?').bind(tagName).first() as any;
+          if (tagRow) {
+            await env.DB.prepare('INSERT OR IGNORE INTO recipe_tags (recipe_id, tag_id) VALUES (?, ?)').bind(recipeId, tagRow.id).run();
+          }
+        }
+      }
+
+      // Insert methods (resolve by name)
+      if (recipe.methods && recipe.methods.length > 0) {
+        for (const m of recipe.methods) {
+          const methodName = typeof m === 'string' ? m : m.name;
+          const methodRow = await env.DB.prepare('SELECT id FROM methods WHERE name = ?').bind(methodName).first() as any;
+          if (methodRow) {
+            await env.DB.prepare('INSERT OR IGNORE INTO recipe_methods (recipe_id, method_id) VALUES (?, ?)').bind(recipeId, methodRow.id).run();
+          }
+        }
+      }
+
+      // Insert regions (resolve by name)
+      if (recipe.regions && recipe.regions.length > 0) {
+        for (const r of recipe.regions) {
+          const regionName = typeof r === 'string' ? r : r.name;
+          const regionRow = await env.DB.prepare('SELECT id FROM regions WHERE name = ?').bind(regionName).first() as any;
+          if (regionRow) {
+            await env.DB.prepare('INSERT OR IGNORE INTO recipe_regions (recipe_id, region_id) VALUES (?, ?)').bind(recipeId, regionRow.id).run();
+          }
+        }
+      }
+
+      results.push({ title: recipe.title, status: existing ? 'updated' : 'inserted', id: recipeId });
     } catch (err: any) {
       results.push({ title: recipe.title, status: 'error', message: err.message });
       skipped++;
