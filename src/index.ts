@@ -497,6 +497,7 @@ export default {
       if (path === '/api/admin/update-recipe-covers' && request.method === 'POST') return await handleUpdateRecipeCovers(request, env);
       if (path === '/api/admin/import-recipes' && request.method === 'POST') return await handleImportRecipes(request, env);
       if (path === '/api/admin/reset-recipes' && request.method === 'POST') return await handleResetRecipes(request, env);
+      if (path === '/api/admin/import-ingredients' && request.method === 'POST') return await handleImportIngredients(request, env);
       if (path === '/api/admin/init' && request.method === 'POST') return await handleAdminInit(request, env);
 
       // Content API routes
@@ -746,6 +747,73 @@ async function handleImportRecipes(request: Request, env: Env): Promise<Response
       results.push({ title: recipe.title, status: existing ? 'updated' : 'inserted', id: recipeId });
     } catch (err: any) {
       results.push({ title: recipe.title, status: 'error', message: err.message });
+      skipped++;
+    }
+  }
+
+  return jsonResponse({ success: true, data: { inserted, updated, skipped, details: results } });
+}
+
+// ==================== 批量导入食材调料 ====================
+async function handleImportIngredients(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const secret = url.searchParams.get('secret') || request.headers.get('X-Admin-Secret') || '';
+  if (secret !== 'cmpy2024secret') return jsonResponse({ success: false, error: 'Unauthorized' }, 401);
+
+  const body = await parseJson<{ ingredients: Array<any> }>(request);
+  if (!body?.ingredients || !Array.isArray(body.ingredients)) return jsonResponse({ success: false, error: '请提供ingredients数组' }, 400);
+
+  const results: any[] = [];
+  let inserted = 0;
+  let updated = 0;
+  let skipped = 0;
+
+  for (const ing of body.ingredients) {
+    if (!ing.name || !ing.slug) {
+      results.push({ name: ing.name || '未知', status: 'skipped', message: '缺少name或slug' });
+      skipped++;
+      continue;
+    }
+    try {
+      const existing = await env.DB.prepare('SELECT id FROM ingredients WHERE slug = ?').bind(ing.slug).first() as any;
+      if (existing) {
+        await env.DB.prepare(
+          'UPDATE ingredients SET name = ?, category = ?, description = ?, image_url = ?, nutrition = ?, tips = ?, aliases = ?, season = ?, origin = ?, storage_method = ? WHERE slug = ?'
+        ).bind(
+          ing.name,
+          ing.category || 'ingredient',
+          ing.description || '',
+          ing.image_url || ing.imageUrl || '',
+          ing.nutrition || '',
+          ing.tips || '',
+          ing.aliases || '',
+          ing.season || '',
+          ing.origin || '',
+          ing.storageMethod || ing.storage_method || '',
+          ing.slug
+        ).run();
+        updated++;
+      } else {
+        await env.DB.prepare(
+          'INSERT INTO ingredients (name, slug, category, description, image_url, nutrition, tips, aliases, season, origin, storage_method, published) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)'
+        ).bind(
+          ing.name,
+          ing.slug,
+          ing.category || 'ingredient',
+          ing.description || '',
+          ing.image_url || ing.imageUrl || '',
+          ing.nutrition || '',
+          ing.tips || '',
+          ing.aliases || '',
+          ing.season || '',
+          ing.origin || '',
+          ing.storageMethod || ing.storage_method || ''
+        ).run();
+        inserted++;
+      }
+      results.push({ name: ing.name, status: existing ? 'updated' : 'inserted' });
+    } catch (err: any) {
+      results.push({ name: ing.name, status: 'error', message: err.message });
       skipped++;
     }
   }

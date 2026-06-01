@@ -39,6 +39,9 @@ async function createTables(env: Env): Promise<void> {
   await runSQL(env, "CREATE TABLE IF NOT EXISTS recipe_methods (recipe_id INTEGER NOT NULL, method_id INTEGER NOT NULL, PRIMARY KEY (recipe_id, method_id), FOREIGN KEY (recipe_id) REFERENCES recipes(id) ON DELETE CASCADE, FOREIGN KEY (method_id) REFERENCES methods(id) ON DELETE CASCADE)");
   await runSQL(env, "CREATE TABLE IF NOT EXISTS recipe_regions (recipe_id INTEGER NOT NULL, region_id INTEGER NOT NULL, PRIMARY KEY (recipe_id, region_id), FOREIGN KEY (recipe_id) REFERENCES recipes(id) ON DELETE CASCADE, FOREIGN KEY (region_id) REFERENCES regions(id) ON DELETE CASCADE)");
   await runSQL(env, "CREATE TABLE IF NOT EXISTS knowledge_entries (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, slug TEXT UNIQUE NOT NULL, category TEXT NOT NULL DEFAULT 'flavor', content TEXT DEFAULT '', published INTEGER DEFAULT 1, created_at TEXT DEFAULT (datetime('now')))");
+  await runSQL(env, "CREATE TABLE IF NOT EXISTS ingredients (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, slug TEXT UNIQUE NOT NULL, category TEXT NOT NULL DEFAULT 'ingredient', description TEXT DEFAULT '', image_url TEXT DEFAULT '', nutrition TEXT DEFAULT '', tips TEXT DEFAULT '', aliases TEXT DEFAULT '', season TEXT DEFAULT '', origin TEXT DEFAULT '', storage_method TEXT DEFAULT '', published INTEGER DEFAULT 1, created_at TEXT DEFAULT (datetime('now')))");
+  await runSQL(env, "CREATE INDEX IF NOT EXISTS idx_ingredients_slug ON ingredients(slug)");
+  await runSQL(env, "CREATE INDEX IF NOT EXISTS idx_ingredients_category ON ingredients(category)");
   await runSQL(env, "CREATE INDEX IF NOT EXISTS idx_knowledge_slug ON knowledge_entries(slug)");
   await runSQL(env, "CREATE INDEX IF NOT EXISTS idx_knowledge_category ON knowledge_entries(category)");
 }

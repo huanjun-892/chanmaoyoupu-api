@@ -246,6 +246,150 @@ export async function handleContentRequest(path: string, request: Request, env: 
     return await handleGetRegions(env);
   }
 
+  // GET /api/content/ingredients
+  if (path === '/api/content/ingredients' && request.method === 'GET') {
+    const url = new URL(request.url);
+    const category = url.searchParams.get('category') || undefined;
+    return await handleGetIngredients(env, category);
+  }
+  // GET /api/content/ingredients/:slug
+  const ingredientMatch = path.match(/^\/api\/content\/ingredients\/([^/]+)$/);
+  if (ingredientMatch && request.method === 'GET') {
+    return await handleGetIngredientBySlug(env, decodeURIComponent(ingredientMatch[1]));
+  }
+  // GET /api/content/search
+  if (path === '/api/content/search' && request.method === 'GET') {
+    return await handleSearch(env, request);
+  }
   // Not a content route - return null to let main handler continue
   return null as any;
+}
+
+// ==================== 食材调料 ====================
+async function handleGetIngredients(env: Env, category?: string): Promise<Response> {
+  let query = 'SELECT id, name, slug, category, description, image_url, nutrition, tips, aliases, season, origin, storage_method FROM ingredients WHERE published = 1';
+  const params: any[] = [];
+  if (category) {
+    query += ' AND category = ?';
+    params.push(category);
+  }
+  query += ' ORDER BY id ASC';
+  
+  const stmt = params.length > 0 
+    ? env.DB.prepare(query).bind(...params) 
+    : env.DB.prepare(query);
+  const results = await stmt.all();
+  
+  const items = results.results.map((ing: any) => ({
+    id: ing.id,
+    name: ing.name,
+    slug: ing.slug,
+    category: ing.category,
+    description: ing.description,
+    imageUrl: ing.image_url,
+    nutrition: ing.nutrition,
+    tips: ing.tips,
+    aliases: ing.aliases,
+    season: ing.season,
+    origin: ing.origin,
+    storageMethod: ing.storage_method,
+  }));
+  return jsonResponse({ success: true, data: items });
+}
+
+async function handleGetIngredientBySlug(env: Env, slug: string): Promise<Response> {
+  const ing = await env.DB.prepare(
+    'SELECT id, name, slug, category, description, image_url, nutrition, tips, aliases, season, origin, storage_method FROM ingredients WHERE slug = ? AND published = 1'
+  ).bind(slug).first();
+  if (!ing) return jsonResponse({ success: false, error: '食材不存在' }, 404);
+  
+  // Find recipes that use this ingredient
+  const recipes = await env.DB.prepare(
+    'SELECT r.id, r.title, r.slug, r.difficulty, r.cook_time, r.cover_url FROM recipes r JOIN recipe_ingredients ri ON r.id = ri.recipe_id WHERE ri.name = ? AND r.published = 1 ORDER BY r.id ASC'
+  ).bind(ing.name).all();
+
+  const item = {
+    id: ing.id,
+    name: ing.name,
+    slug: ing.slug,
+    category: ing.category,
+    description: ing.description,
+    imageUrl: ing.image_url,
+    nutrition: ing.nutrition,
+    tips: ing.tips,
+    aliases: ing.aliases,
+    season: ing.season,
+    origin: ing.origin,
+    storageMethod: ing.storage_method,
+    relatedRecipes: recipes.results.map((r: any) => ({
+      id: r.id,
+      title: r.title,
+      slug: r.slug,
+      difficulty: r.difficulty,
+      cookTime: r.cook_time,
+      cover: r.cover_url ? { url: r.cover_url, formats: { small: { url: r.cover_url } } } : null,
+    })),
+  };
+  return jsonResponse({ success: true, data: item });
+}
+
+// ==================== 全站搜索 ====================
+async function handleSearch(env: Env, request: Request): Promise<Response> {
+  const url = new URL(request.url);
+  const q = url.searchParams.get('q') || '';
+  const type = url.searchParams.get('type') || 'all'; // all, recipes, knowledge, ingredients
+  
+  if (!q || q.trim().length === 0) {
+    return jsonResponse({ success: true, data: { recipes: [], knowledge: [], ingredients: [], total: 0 } });
+  }
+  
+  const keyword = `%${q.trim()}%`;
+  const results: any = { query: q, recipes: [], knowledge: [], ingredients: [], total: 0 };
+  
+  if (type === 'all' || type === 'recipes') {
+    const recipes = await env.DB.prepare(
+      'SELECT id, title, slug, description, difficulty, cook_time, cover_url FROM recipes WHERE (title LIKE ? OR description LIKE ?) AND published = 1 ORDER BY id ASC LIMIT 20'
+    ).bind(keyword, keyword).all();
+    results.recipes = recipes.results.map((r: any) => ({
+      id: r.id,
+      title: r.title,
+      slug: r.slug,
+      description: r.description,
+      difficulty: r.difficulty,
+      cookTime: r.cook_time,
+      cover: r.cover_url ? { url: r.cover_url, formats: { small: { url: r.cover_url } } } : null,
+      type: 'recipe',
+    }));
+  }
+  
+  if (type === 'all' || type === 'knowledge') {
+    const knowledge = await env.DB.prepare(
+      'SELECT id, title, slug, category FROM knowledge_entries WHERE (title LIKE ? OR content LIKE ?) AND published = 1 AND category != ? ORDER BY id ASC LIMIT 20'
+    ).bind(keyword, keyword, 'secret').all();
+    results.knowledge = knowledge.results.map((k: any) => ({
+      id: k.id,
+      title: k.title,
+      slug: k.slug,
+      category: k.category,
+      type: 'knowledge',
+    }));
+  }
+  
+  if (type === 'all' || type === 'ingredients') {
+    const ingredients = await env.DB.prepare(
+      'SELECT id, name, slug, category, description, image_url FROM ingredients WHERE (name LIKE ? OR description LIKE ? OR aliases LIKE ?) AND published = 1 ORDER BY id ASC LIMIT 20'
+    ).bind(keyword, keyword, keyword).all();
+    results.ingredients = ingredients.results.map((ing: any) => ({
+      id: ing.id,
+      name: ing.name,
+      slug: ing.slug,
+      category: ing.category,
+      description: ing.description,
+      imageUrl: ing.image_url,
+      type: 'ingredient',
+    }));
+  }
+  
+  results.total = results.recipes.length + results.knowledge.length + results.ingredients.length;
+  return jsonResponse({ success: true, data: results });
 }
