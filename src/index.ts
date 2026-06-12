@@ -1,5 +1,6 @@
 import { handleContentRequest } from './content';
 import { handleAdminInit } from './migrate';
+import { handleAdminRequest } from './admin';
 /**
  * Cloudflare Workers - 馋猫有谱 API
  * 包含用户认证、点赞、收藏、排行榜功能
@@ -176,14 +177,14 @@ async function handleRegister(request: Request, env: Env): Promise<Response> {
   
   try {
     const result = await env.DB.prepare(
-      'INSERT INTO users (email, password_hash, nickname, phone, birthday) VALUES (?, ?, ?, ?, ?) RETURNING id, email, nickname, avatar_url, phone, birthday, created_at'
+      'INSERT INTO users (email, password_hash, nickname, phone, birthday, role) VALUES (?, ?, ?, ?, ?, "user") RETURNING id, email, nickname, avatar_url, phone, birthday, role, created_at'
     ).bind(body.email, passwordHash, nickname, phone, birthday).first();
     
     const token = await createToken({ userId: result.id, email: result.email }, env.JWT_SECRET);
     return jsonResponse({
       success: true,
       data: {
-        user: { id: result.id, email: result.email, nickname: result.nickname, avatar_url: result.avatar_url, phone: result.phone, birthday: result.birthday },
+        user: { id: result.id, email: result.email, nickname: result.nickname, avatar_url: result.avatar_url, phone: result.phone, birthday: result.birthday, role: (result as any).role || 'user' },
         token,
       },
     });
@@ -197,7 +198,19 @@ async function handleLogin(request: Request, env: Env): Promise<Response> {
   const body = await parseJson<{ email: string; password: string }>(request);
   if (!body?.email || !body?.password) return jsonResponse({ success: false, error: '邮箱和密码不能为空' }, 400);
   
-  const user = await env.DB.prepare('SELECT * FROM users WHERE email = ?').bind(body.email).first();
+  // 尝试获取用户信息，如果role列不存在则自动迁移
+  let user: any;
+  try {
+    user = await env.DB.prepare('SELECT * FROM users WHERE email = ?').bind(body.email).first();
+  } catch (err: any) {
+    // role列不存在，执行迁移
+    if (err.message?.includes('no such column') || err.message?.includes('role')) {
+      await migrateRoleColumn(env);
+      user = await env.DB.prepare('SELECT * FROM users WHERE email = ?').bind(body.email).first();
+    } else {
+      throw err;
+    }
+  }
   if (!user) return jsonResponse({ success: false, error: '邮箱或密码错误' }, 401);
   
   const valid = await verifyPassword(body.password, user.password_hash);
@@ -207,19 +220,42 @@ async function handleLogin(request: Request, env: Env): Promise<Response> {
   return jsonResponse({
     success: true,
     data: {
-      user: { id: user.id, email: user.email, nickname: user.nickname, avatar_url: user.avatar_url, phone: user.phone || '', birthday: user.birthday || '' },
+      user: { id: user.id, email: user.email, nickname: user.nickname, avatar_url: user.avatar_url, phone: user.phone || '', birthday: user.birthday || '', role: user.role || 'user' },
       token,
     },
   });
+}
+
+// ==================== 迁移：添加role字段 ====================
+async function migrateRoleColumn(env: Env): Promise<void> {
+  try {
+    // 添加role列
+    await env.DB.exec('ALTER TABLE users ADD COLUMN role TEXT DEFAULT "user"');
+    // 将第一个注册的用户设为admin（焕军）
+    await env.DB.prepare('UPDATE users SET role = "admin" WHERE id = (SELECT MIN(id) FROM users)').run();
+  } catch (err: any) {
+    // 忽略已存在的错误
+    if (!err.message?.includes('duplicate column name') && !err.message?.includes('already exists')) {
+      throw err;
+    }
+  }
 }
 
 // ==================== 获取当前用户 ====================
 async function handleGetMe(request: Request, env: Env): Promise<Response> {
   const auth = await authenticateRequest(request, env);
   if (!auth) return jsonResponse({ success: false, error: '未登录' }, 401);
-  const user = await env.DB.prepare('SELECT id, email, nickname, avatar_url, phone, birthday, created_at FROM users WHERE id = ?').bind(auth.userId).first();
+  let user: any;
+  try {
+    user = await env.DB.prepare('SELECT id, email, nickname, avatar_url, phone, birthday, role, created_at FROM users WHERE id = ?').bind(auth.userId).first();
+  } catch (err: any) {
+    if (err.message?.includes('no such column') || err.message?.includes('role')) {
+      await migrateRoleColumn(env);
+      user = await env.DB.prepare('SELECT id, email, nickname, avatar_url, phone, birthday, role, created_at FROM users WHERE id = ?').bind(auth.userId).first();
+    } else { throw err; }
+  }
   if (!user) return jsonResponse({ success: false, error: '用户不存在' }, 404);
-  return jsonResponse({ success: true, data: user });
+  return jsonResponse({ success: true, data: { ...user, role: user.role || 'user' } });
 }
 
 // ==================== 更新用户信息 ====================
@@ -492,8 +528,10 @@ export default {
       if (path === '/api/rankings/likes' && request.method === 'GET') return await handleLikesRanking(request, env);
       if (path === '/api/rankings/favorites' && request.method === 'GET') return await handleFavoritesRanking(request, env);
       if (path === '/api/health') return jsonResponse({ success: true, data: { status: 'ok', timestamp: new Date().toISOString() } });
-      // Admin routes
+
+      // Admin batch import routes (legacy secret auth) - must come before JWT admin routes
       if (path === '/api/admin/import-knowledge' && request.method === 'POST') return await handleImportKnowledge(request, env);
+      if (path === '/api/admin/delete-knowledge' && request.method === 'POST') return await handleDeleteKnowledge(request, env);
       if (path === '/api/admin/update-recipe-covers' && request.method === 'POST') return await handleUpdateRecipeCovers(request, env);
       if (path === '/api/admin/import-recipes' && request.method === 'POST') return await handleImportRecipes(request, env);
       if (path === '/api/admin/reset-recipes' && request.method === 'POST') return await handleResetRecipes(request, env);
@@ -503,7 +541,16 @@ export default {
       if (path === '/api/admin/import-tags' && request.method === 'POST') return await handleImportTags(request, env);
       if (path === '/api/admin/delete-recipe' && request.method === 'POST') return await handleDeleteRecipe(request, env);
       if (path === '/api/admin/delete-tag' && request.method === 'POST') return await handleDeleteTag(request, env);
+      if (path === '/api/admin/import-regions' && request.method === 'POST') return await handleImportRegions(request, env);
+      if (path === '/api/admin/import-methods' && request.method === 'POST') return await handleImportMethods(request, env);
+      if (path === '/api/admin/delete-cuisine' && request.method === 'POST') return await handleDeleteCuisine(request, env);
+      if (path === '/api/admin/sync-recipe-classifications' && request.method === 'POST') return await handleSyncRecipeClassifications(request, env);
       if (path === '/api/admin/init' && request.method === 'POST') return await handleAdminInit(request, env);
+      if (path === '/api/admin/sql' && request.method === 'POST') return await handleAdminSQL(request, env);
+
+      // Admin CRUD routes (JWT + role auth)
+      const adminResponse = await handleAdminRequest(path, request, env);
+      if (adminResponse) return adminResponse;
 
       // Content API routes
       if (path.startsWith('/api/content/')) {
@@ -540,15 +587,20 @@ async function handleImportKnowledge(request: Request, env: Env): Promise<Respon
     }
     try {
       const existing = await env.DB.prepare('SELECT id FROM knowledge_entries WHERE slug = ?').bind(entry.slug).first();
+      const author = entry.author || '';
+      const isOriginal = entry.is_original ? 1 : 0;
+      const publishedAt = entry.published_at || '';
+      const summary = entry.summary || '';
+      const keywords = entry.keywords || '';
       if (existing) {
         // Update existing
-        await env.DB.prepare('UPDATE knowledge_entries SET title = ?, category = ?, content = ? WHERE slug = ?')
-          .bind(entry.title, entry.category, entry.content, entry.slug).run();
+        await env.DB.prepare('UPDATE knowledge_entries SET title = ?, category = ?, content = ?, author = ?, is_original = ?, published_at = ?, summary = ?, keywords = ? WHERE slug = ?')
+          .bind(entry.title, entry.category, entry.content, author, isOriginal, publishedAt, summary, keywords, entry.slug).run();
         results.push(`更新: ${entry.slug}`);
       } else {
         // Insert new
-        await env.DB.prepare('INSERT INTO knowledge_entries (title, slug, category, content) VALUES (?, ?, ?, ?)')
-          .bind(entry.title, entry.slug, entry.category, entry.content).run();
+        await env.DB.prepare('INSERT INTO knowledge_entries (title, slug, category, content, author, is_original, published_at, summary, keywords) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+          .bind(entry.title, entry.slug, entry.category, entry.content, author, isOriginal, publishedAt, summary, keywords).run();
         results.push(`新增: ${entry.slug}`);
       }
       inserted++;
@@ -561,6 +613,30 @@ async function handleImportKnowledge(request: Request, env: Env): Promise<Respon
   return jsonResponse({ success: true, data: { inserted, skipped, details: results } });
 }
 
+
+// ==================== 删除知识库条目 ====================
+async function handleDeleteKnowledge(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const secret = url.searchParams.get('secret') || request.headers.get('X-Admin-Secret') || '';
+  if (secret !== 'cmpy2024secret') return jsonResponse({ success: false, error: 'Unauthorized' }, 401);
+
+  const body = await request.json() as { id?: number; slug?: string };
+  if (!body.id && !body.slug) {
+    return jsonResponse({ success: false, error: '请提供 id 或 slug' }, 400);
+  }
+
+  try {
+    let result;
+    if (body.id) {
+      result = await env.DB.prepare('DELETE FROM knowledge_entries WHERE id = ?').bind(body.id).run();
+    } else {
+      result = await env.DB.prepare('DELETE FROM knowledge_entries WHERE slug = ?').bind(body.slug).run();
+    }
+    return jsonResponse({ success: true, data: { deleted: result.meta?.changes || 0 } });
+  } catch (err: any) {
+    return jsonResponse({ success: false, error: err.message }, 500);
+  }
+}
 
 // ==================== 批量更新食谱封面 ====================
 async function handleUpdateRecipeCovers(request: Request, env: Env): Promise<Response> {
@@ -655,7 +731,7 @@ async function handleImportRecipes(request: Request, env: Env): Promise<Response
       if (existing) {
         // Update existing recipe
         await env.DB.prepare(
-          'UPDATE recipes SET title = ?, description = ?, difficulty = ?, cook_time = ?, servings = ?, calories = ?, cuisine_id = ?, cover_url = ? WHERE slug = ?'
+          'UPDATE recipes SET title = ?, description = ?, difficulty = ?, cook_time = ?, servings = ?, calories = ?, cuisine_id = ?, cover_url = ?, nutrition = ?, common_mistakes = ?, success_tips = ?, ingredient_substitutes = ?, suitable_for = ?, required_tools = ? WHERE slug = ?'
         ).bind(
           recipe.title,
           recipe.description || '',
@@ -665,6 +741,12 @@ async function handleImportRecipes(request: Request, env: Env): Promise<Response
           recipe.calories || 0,
           cuisineId,
           recipe.cover_url || recipe.cover?.url || null,
+          recipe.nutrition || '',
+          recipe.common_mistakes || '',
+          recipe.success_tips || '',
+          recipe.ingredient_substitutes || '',
+          recipe.suitable_for || '',
+          recipe.required_tools || '',
           recipe.slug
         ).run();
         recipeId = existing.id;
@@ -679,7 +761,7 @@ async function handleImportRecipes(request: Request, env: Env): Promise<Response
       } else {
         // Insert new recipe
         const result = await env.DB.prepare(
-          'INSERT INTO recipes (title, slug, description, difficulty, cook_time, servings, calories, cuisine_id, cover_url, published) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1) RETURNING id'
+          'INSERT INTO recipes (title, slug, description, difficulty, cook_time, servings, calories, cuisine_id, cover_url, nutrition, common_mistakes, success_tips, ingredient_substitutes, suitable_for, required_tools, published) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1) RETURNING id'
         ).bind(
           recipe.title,
           recipe.slug,
@@ -689,7 +771,13 @@ async function handleImportRecipes(request: Request, env: Env): Promise<Response
           recipe.servings || 2,
           recipe.calories || 0,
           cuisineId,
-          recipe.cover_url || recipe.cover?.url || null
+          recipe.cover_url || recipe.cover?.url || null,
+          recipe.nutrition || '',
+          recipe.common_mistakes || '',
+          recipe.success_tips || '',
+          recipe.ingredient_substitutes || '',
+          recipe.suitable_for || '',
+          recipe.required_tools || ''
         ).first() as any;
         recipeId = result.id;
         inserted++;
@@ -783,7 +871,7 @@ async function handleImportIngredients(request: Request, env: Env): Promise<Resp
       const existing = await env.DB.prepare('SELECT id FROM ingredients WHERE slug = ?').bind(ing.slug).first() as any;
       if (existing) {
         await env.DB.prepare(
-          'UPDATE ingredients SET name = ?, category = ?, description = ?, image_url = ?, nutrition = ?, tips = ?, aliases = ?, season = ?, origin = ?, storage_method = ? WHERE slug = ?'
+          'UPDATE ingredients SET name = ?, category = ?, description = ?, image_url = ?, nutrition = ?, tips = ?, aliases = ?, season = ?, origin = ?, storage_method = ?, pairing_suggestions = ?, avoid_with = ? WHERE slug = ?'
         ).bind(
           ing.name,
           ing.category || 'ingredient',
@@ -795,12 +883,14 @@ async function handleImportIngredients(request: Request, env: Env): Promise<Resp
           ing.season || '',
           ing.origin || '',
           ing.storageMethod || ing.storage_method || '',
+          ing.pairingSuggestions || ing.pairing_suggestions || '',
+          ing.avoidWith || ing.avoid_with || '',
           ing.slug
         ).run();
         updated++;
       } else {
         await env.DB.prepare(
-          'INSERT INTO ingredients (name, slug, category, description, image_url, nutrition, tips, aliases, season, origin, storage_method, published) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)'
+          'INSERT INTO ingredients (name, slug, category, description, image_url, nutrition, tips, aliases, season, origin, storage_method, pairing_suggestions, avoid_with, published) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)'
         ).bind(
           ing.name,
           ing.slug,
@@ -812,7 +902,9 @@ async function handleImportIngredients(request: Request, env: Env): Promise<Resp
           ing.aliases || '',
           ing.season || '',
           ing.origin || '',
-          ing.storageMethod || ing.storage_method || ''
+          ing.storageMethod || ing.storage_method || '',
+          ing.pairingSuggestions || ing.pairing_suggestions || '',
+          ing.avoidWith || ing.avoid_with || ''
         ).run();
         inserted++;
       }
@@ -949,4 +1041,179 @@ async function handleImportCuisines(request: Request, env: Env): Promise<Respons
     }
   }
   return jsonResponse({ success: true, results });
+}
+
+// ==================== 批量导入地区 ====================
+async function handleImportRegions(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const secret = url.searchParams.get('secret') || request.headers.get('X-Admin-Secret') || '';
+  if (secret !== 'cmpy2024secret') return jsonResponse({ success: false, error: 'Unauthorized' }, 401);
+  const body = await parseJson<{ regions: Array<{ name: string }> }>(request);
+  if (!body?.regions || !Array.isArray(body.regions)) return jsonResponse({ success: false, error: '请提供regions数组 [{name}]' }, 400);
+  const results: any[] = [];
+  for (const r of body.regions) {
+    if (!r.name) continue;
+    try {
+      const existing = await env.DB.prepare('SELECT id FROM regions WHERE name = ?').bind(r.name).first() as any;
+      if (existing) {
+        results.push({ name: r.name, status: 'exists', id: existing.id });
+      } else {
+        const result = await env.DB.prepare('INSERT INTO regions (name) VALUES (?) RETURNING id').bind(r.name).first() as any;
+        results.push({ name: r.name, status: 'inserted', id: result.id });
+      }
+    } catch (err: any) {
+      results.push({ name: r.name, status: 'error', message: err.message });
+    }
+  }
+  return jsonResponse({ success: true, results });
+}
+
+// ==================== 批量导入做法 ====================
+async function handleImportMethods(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const secret = url.searchParams.get('secret') || request.headers.get('X-Admin-Secret') || '';
+  if (secret !== 'cmpy2024secret') return jsonResponse({ success: false, error: 'Unauthorized' }, 401);
+  const body = await parseJson<{ methods: Array<{ name: string }> }>(request);
+  if (!body?.methods || !Array.isArray(body.methods)) return jsonResponse({ success: false, error: '请提供methods数组 [{name}]' }, 400);
+  const results: any[] = [];
+  for (const m of body.methods) {
+    if (!m.name) continue;
+    try {
+      const existing = await env.DB.prepare('SELECT id FROM methods WHERE name = ?').bind(m.name).first() as any;
+      if (existing) {
+        results.push({ name: m.name, status: 'exists', id: existing.id });
+      } else {
+        const result = await env.DB.prepare('INSERT INTO methods (name) VALUES (?) RETURNING id').bind(m.name).first() as any;
+        results.push({ name: m.name, status: 'inserted', id: result.id });
+      }
+    } catch (err: any) {
+      results.push({ name: m.name, status: 'error', message: err.message });
+    }
+  }
+  return jsonResponse({ success: true, results });
+}
+
+// ==================== 删除菜系 ====================
+async function handleDeleteCuisine(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const secret = url.searchParams.get('secret') || request.headers.get('X-Admin-Secret') || '';
+  if (secret !== 'cmpy2024secret') return jsonResponse({ success: false, error: 'Unauthorized' }, 401);
+  const body = await parseJson<{ id?: number; slug?: string }>(request);
+  if (!body?.id && !body?.slug) return jsonResponse({ success: false, error: '请提供id或slug' }, 400);
+  try {
+    let cuisineId = body.id;
+    if (!cuisineId && body.slug) {
+      const row = await env.DB.prepare('SELECT id FROM cuisines WHERE slug = ?').bind(body.slug).first() as any;
+      if (!row) return jsonResponse({ success: false, error: '菜系不存在' }, 404);
+      cuisineId = row.id;
+    }
+    // Set recipes with this cuisine_id to NULL
+    await env.DB.prepare('UPDATE recipes SET cuisine_id = NULL WHERE cuisine_id = ?').bind(cuisineId).run();
+    // Delete the cuisine
+    await env.DB.prepare('DELETE FROM cuisines WHERE id = ?').bind(cuisineId).run();
+    return jsonResponse({ success: true, deleted: cuisineId });
+  } catch (err: any) {
+    return jsonResponse({ success: false, error: err.message }, 500);
+  }
+}
+
+// ==================== 同步食谱分类 ====================
+async function handleSyncRecipeClassifications(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const secret = url.searchParams.get('secret') || request.headers.get('X-Admin-Secret') || '';
+  if (secret !== 'cmpy2024secret') return jsonResponse({ success: false, error: 'Unauthorized' }, 401);
+  const body = await parseJson<{
+    updates: Array<{
+      recipeSlug: string;
+      cuisine?: string;
+      addTags?: string[];
+      removeTags?: string[];
+      addRegions?: string[];
+      removeRegions?: string[];
+      addMethods?: string[];
+      removeMethods?: string[];
+    }>
+  }>(request);
+  if (!body?.updates || !Array.isArray(body.updates)) return jsonResponse({ success: false, error: '请提供updates数组' }, 400);
+  const results: any[] = [];
+  for (const u of body.updates) {
+    try {
+      const recipe = await env.DB.prepare('SELECT id FROM recipes WHERE slug = ?').bind(u.recipeSlug).first() as any;
+      if (!recipe) { results.push({ slug: u.recipeSlug, status: 'not_found' }); continue; }
+      const recipeId = recipe.id;
+      // Update cuisine
+      if (u.cuisine !== undefined) {
+        if (u.cuisine === '') {
+          await env.DB.prepare('UPDATE recipes SET cuisine_id = NULL WHERE id = ?').bind(recipeId).run();
+        } else {
+          const c = await env.DB.prepare('SELECT id FROM cuisines WHERE name = ?').bind(u.cuisine).first() as any;
+          if (c) await env.DB.prepare('UPDATE recipes SET cuisine_id = ? WHERE id = ?').bind(c.id, recipeId).run();
+        }
+      }
+      // Add tags
+      if (u.addTags && u.addTags.length > 0) {
+        for (const tagName of u.addTags) {
+          const t = await env.DB.prepare('SELECT id FROM tags WHERE name = ?').bind(tagName).first() as any;
+          if (t) await env.DB.prepare('INSERT OR IGNORE INTO recipe_tags (recipe_id, tag_id) VALUES (?, ?)').bind(recipeId, t.id).run();
+        }
+      }
+      // Remove tags
+      if (u.removeTags && u.removeTags.length > 0) {
+        for (const tagName of u.removeTags) {
+          const t = await env.DB.prepare('SELECT id FROM tags WHERE name = ?').bind(tagName).first() as any;
+          if (t) await env.DB.prepare('DELETE FROM recipe_tags WHERE recipe_id = ? AND tag_id = ?').bind(recipeId, t.id).run();
+        }
+      }
+      // Add regions
+      if (u.addRegions && u.addRegions.length > 0) {
+        for (const regionName of u.addRegions) {
+          const r = await env.DB.prepare('SELECT id FROM regions WHERE name = ?').bind(regionName).first() as any;
+          if (r) await env.DB.prepare('INSERT OR IGNORE INTO recipe_regions (recipe_id, region_id) VALUES (?, ?)').bind(recipeId, r.id).run();
+        }
+      }
+      // Remove regions
+      if (u.removeRegions && u.removeRegions.length > 0) {
+        for (const regionName of u.removeRegions) {
+          const r = await env.DB.prepare('SELECT id FROM regions WHERE name = ?').bind(regionName).first() as any;
+          if (r) await env.DB.prepare('DELETE FROM recipe_regions WHERE recipe_id = ? AND region_id = ?').bind(recipeId, r.id).run();
+        }
+      }
+      // Add methods
+      if (u.addMethods && u.addMethods.length > 0) {
+        for (const methodName of u.addMethods) {
+          const m = await env.DB.prepare('SELECT id FROM methods WHERE name = ?').bind(methodName).first() as any;
+          if (m) await env.DB.prepare('INSERT OR IGNORE INTO recipe_methods (recipe_id, method_id) VALUES (?, ?)').bind(recipeId, m.id).run();
+        }
+      }
+      // Remove methods
+      if (u.removeMethods && u.removeMethods.length > 0) {
+        for (const methodName of u.removeMethods) {
+          const m = await env.DB.prepare('SELECT id FROM methods WHERE name = ?').bind(methodName).first() as any;
+          if (m) await env.DB.prepare('DELETE FROM recipe_methods WHERE recipe_id = ? AND method_id = ?').bind(recipeId, m.id).run();
+        }
+      }
+      results.push({ slug: u.recipeSlug, status: 'updated' });
+    } catch (err: any) {
+      results.push({ slug: u.recipeSlug, status: 'error', message: err.message });
+    }
+  }
+  return jsonResponse({ success: true, results });
+}
+
+
+// ==================== 执行SQL（临时管理接口） ====================
+async function handleAdminSQL(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const secret = url.searchParams.get('secret') || request.headers.get('X-Admin-Secret') || '';
+  if (secret !== 'cmpy2024secret') return jsonResponse({ success: false, error: 'Unauthorized' }, 401);
+
+  const body = await parseJson<{ sql: string }>(request);
+  if (!body?.sql) return jsonResponse({ success: false, error: '请提供sql参数' }, 400);
+
+  try {
+    const result = await env.DB.exec(body.sql);
+    return jsonResponse({ success: true, result });
+  } catch (err: any) {
+    return jsonResponse({ success: false, error: err.message }, 500);
+  }
 }

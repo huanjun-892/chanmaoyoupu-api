@@ -121,13 +121,19 @@ async function buildRecipeObject(env: Env, recipe: any): Promise<any> {
     cover: recipe.cover_url ? {
       url: recipe.cover_url,
       formats: { small: { url: recipe.cover_url } }
-    } : null
+    } : null,
+    nutrition: recipe.nutrition || '',
+    common_mistakes: recipe.common_mistakes || '',
+    success_tips: recipe.success_tips || '',
+    ingredient_substitutes: recipe.ingredient_substitutes || '',
+    suitable_for: recipe.suitable_for || '',
+    required_tools: recipe.required_tools || ''
   };
 }
 
 async function handleGetRecipes(env: Env): Promise<Response> {
   const results = await env.DB.prepare(
-    'SELECT id, title, slug, description, difficulty, cook_time, servings, calories, cuisine_id, cover_url FROM recipes WHERE published = 1 ORDER BY id ASC'
+    'SELECT id, title, slug, description, difficulty, cook_time, servings, calories, cuisine_id, cover_url, nutrition, common_mistakes, success_tips, ingredient_substitutes, suitable_for, required_tools FROM recipes WHERE published = 1 ORDER BY id DESC'
   ).all();
   
   const items = await Promise.all(results.results.map((r: any) => buildRecipeObject(env, r)));
@@ -136,7 +142,7 @@ async function handleGetRecipes(env: Env): Promise<Response> {
 
 async function handleGetRecipeBySlug(env: Env, slug: string): Promise<Response> {
   const recipe = await env.DB.prepare(
-    'SELECT id, title, slug, description, difficulty, cook_time, servings, calories, cuisine_id, cover_url FROM recipes WHERE slug = ? AND published = 1'
+    'SELECT id, title, slug, description, difficulty, cook_time, servings, calories, cuisine_id, cover_url, nutrition, common_mistakes, success_tips, ingredient_substitutes, suitable_for, required_tools FROM recipes WHERE slug = ? AND published = 1'
   ).bind(slug).first();
   if (!recipe) return jsonResponse({ success: false, error: '食谱不存在' }, 404);
   const item = await buildRecipeObject(env, recipe);
@@ -145,13 +151,13 @@ async function handleGetRecipeBySlug(env: Env, slug: string): Promise<Response> 
 
 // ==================== 知识库 ====================
 async function handleGetKnowledge(env: Env, category?: string): Promise<Response> {
-  let query = 'SELECT id, title, slug, category, content FROM knowledge_entries WHERE published = 1';
+  let query = 'SELECT id, title, slug, category, content, author, is_original, published_at, summary, keywords, created_at FROM knowledge_entries WHERE published = 1';
   const params: any[] = [];
   if (category) {
     query += ' AND category = ?';
     params.push(category);
   }
-  query += ' ORDER BY id ASC';
+  query += ' ORDER BY id DESC';
   
   const stmt = params.length > 0 
     ? env.DB.prepare(query).bind(...params) 
@@ -164,15 +170,24 @@ async function handleGetKnowledge(env: Env, category?: string): Promise<Response
     slug: k.slug,
     category: k.category,
     content: k.content,
+    author: k.author,
+    is_original: k.is_original,
+    published_at: k.published_at || k.created_at || '',
+    summary: k.summary,
+    keywords: k.keywords,
   }));
   return jsonResponse({ success: true, data: items });
 }
 
 async function handleGetKnowledgeBySlug(env: Env, slug: string): Promise<Response> {
   const entry = await env.DB.prepare(
-    'SELECT id, title, slug, category, content FROM knowledge_entries WHERE slug = ? AND published = 1'
+    'SELECT id, title, slug, category, content, author, is_original, published_at, summary, keywords, created_at FROM knowledge_entries WHERE slug = ? AND published = 1'
   ).bind(slug).first();
   if (!entry) return jsonResponse({ success: false, error: '内容不存在' }, 404);
+  // 兜底：如果published_at为空，用created_at
+  if (entry && !entry.published_at && entry.created_at) {
+    entry.published_at = entry.created_at;
+  }
   return jsonResponse({ success: true, data: entry });
 }
 
@@ -267,13 +282,13 @@ export async function handleContentRequest(path: string, request: Request, env: 
 
 // ==================== 食材调料 ====================
 async function handleGetIngredients(env: Env, category?: string): Promise<Response> {
-  let query = 'SELECT id, name, slug, category, description, image_url, nutrition, tips, aliases, season, origin, storage_method FROM ingredients WHERE published = 1';
+  let query = 'SELECT id, name, slug, category, description, image_url, nutrition, tips, aliases, season, origin, storage_method, pairing_suggestions, avoid_with FROM ingredients WHERE published = 1';
   const params: any[] = [];
   if (category) {
     query += ' AND category = ?';
     params.push(category);
   }
-  query += ' ORDER BY id ASC';
+  query += ' ORDER BY id DESC';
   
   const stmt = params.length > 0 
     ? env.DB.prepare(query).bind(...params) 
@@ -293,13 +308,15 @@ async function handleGetIngredients(env: Env, category?: string): Promise<Respon
     season: ing.season,
     origin: ing.origin,
     storageMethod: ing.storage_method,
+    pairingSuggestions: ing.pairing_suggestions,
+    avoidWith: ing.avoid_with,
   }));
   return jsonResponse({ success: true, data: items });
 }
 
 async function handleGetIngredientBySlug(env: Env, slug: string): Promise<Response> {
   const ing = await env.DB.prepare(
-    'SELECT id, name, slug, category, description, image_url, nutrition, tips, aliases, season, origin, storage_method FROM ingredients WHERE slug = ? AND published = 1'
+    'SELECT id, name, slug, category, description, image_url, nutrition, tips, aliases, season, origin, storage_method, pairing_suggestions, avoid_with FROM ingredients WHERE slug = ? AND published = 1'
   ).bind(slug).first();
   if (!ing) return jsonResponse({ success: false, error: '食材不存在' }, 404);
   
@@ -321,6 +338,8 @@ async function handleGetIngredientBySlug(env: Env, slug: string): Promise<Respon
     season: ing.season,
     origin: ing.origin,
     storageMethod: ing.storage_method,
+    pairingSuggestions: ing.pairing_suggestions,
+    avoidWith: ing.avoid_with,
     relatedRecipes: recipes.results.map((r: any) => ({
       id: r.id,
       title: r.title,
