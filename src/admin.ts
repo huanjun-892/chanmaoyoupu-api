@@ -1042,6 +1042,304 @@ async function handleUpdateUserRole(request: Request, env: Env, id: number): Pro
   }
 }
 
+// ==================== 运营配置 - 友情链接 ====================
+async function handleGetFriendLinks(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const all = url.searchParams.get('all') === '1';
+  
+  let query = 'SELECT id, name, url, logo, description, sort_order, status, created_at FROM friend_links';
+  if (!all) query += ' WHERE status = 1';
+  query += ' ORDER BY sort_order ASC, id DESC';
+  
+  const result = await env.DB.prepare(query).all();
+  return jsonResponse({ success: true, data: result.results });
+}
+
+async function handleCreateFriendLink(request: Request, env: Env): Promise<Response> {
+  const body = await parseJson<any>(request);
+  if (!body?.name || !body?.url) {
+    return jsonResponse({ success: false, error: '名称和链接不能为空' }, 400);
+  }
+  
+  try {
+    const maxSort = await env.DB.prepare('SELECT MAX(sort_order) as max_sort FROM friend_links').first() as any;
+    const sortOrder = body.sort_order ?? (maxSort?.max_sort || 0) + 1;
+    
+    const result = await env.DB.prepare(`
+      INSERT INTO friend_links (name, url, logo, description, sort_order, status)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).bind(body.name, body.url, body.logo || '', body.description || '', sortOrder, body.status ?? 1).run();
+    
+    return jsonResponse({ success: true, data: { id: (result.meta as any).last_row_id } });
+  } catch (err: any) {
+    return jsonResponse({ success: false, error: err.message }, 500);
+  }
+}
+
+async function handleUpdateFriendLink(request: Request, env: Env, id: number): Promise<Response> {
+  const body = await parseJson<any>(request);
+  if (!body) return jsonResponse({ success: false, error: '请求参数错误' }, 400);
+  
+  const existing = await env.DB.prepare('SELECT id FROM friend_links WHERE id = ?').bind(id).first();
+  if (!existing) return jsonResponse({ success: false, error: '友情链接不存在' }, 404);
+  
+  try {
+    const updates: string[] = [];
+    const values: any[] = [];
+    
+    for (const field of ['name', 'url', 'logo', 'description', 'sort_order', 'status']) {
+      if (body[field] !== undefined) {
+        updates.push(`${field} = ?`);
+        values.push(body[field]);
+      }
+    }
+    
+    if (updates.length > 0) {
+      values.push(id);
+      await env.DB.prepare(`UPDATE friend_links SET ${updates.join(', ')} WHERE id = ?`).bind(...values).run();
+    }
+    
+    return jsonResponse({ success: true, data: { id } });
+  } catch (err: any) {
+    return jsonResponse({ success: false, error: err.message }, 500);
+  }
+}
+
+async function handleDeleteFriendLink(env: Env, id: number): Promise<Response> {
+  const existing = await env.DB.prepare('SELECT id FROM friend_links WHERE id = ?').bind(id).first();
+  if (!existing) return jsonResponse({ success: false, error: '友情链接不存在' }, 404);
+  
+  try {
+    await env.DB.prepare('DELETE FROM friend_links WHERE id = ?').bind(id).run();
+    return jsonResponse({ success: true, data: { deleted: id } });
+  } catch (err: any) {
+    return jsonResponse({ success: false, error: err.message }, 500);
+  }
+}
+
+// ==================== 运营配置 - 导航菜单 ====================
+async function handleGetNavMenus(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const all = url.searchParams.get('all') === '1';
+  
+  let query = 'SELECT id, name, link, sort_order, status, parent_id, created_at FROM nav_menus';
+  if (!all) query += ' WHERE status = 1';
+  query += ' ORDER BY sort_order ASC, id ASC';
+  
+  const result = await env.DB.prepare(query).all();
+  return jsonResponse({ success: true, data: result.results });
+}
+
+async function handleCreateNavMenu(request: Request, env: Env): Promise<Response> {
+  const body = await parseJson<any>(request);
+  if (!body?.name || !body?.link) {
+    return jsonResponse({ success: false, error: '名称和链接不能为空' }, 400);
+  }
+  
+  try {
+    const maxSort = await env.DB.prepare('SELECT MAX(sort_order) as max_sort FROM nav_menus').first() as any;
+    const sortOrder = body.sort_order ?? (maxSort?.max_sort || 0) + 1;
+    
+    const result = await env.DB.prepare(`
+      INSERT INTO nav_menus (name, link, sort_order, status, parent_id)
+      VALUES (?, ?, ?, ?, ?)
+    `).bind(body.name, body.link, sortOrder, body.status ?? 1, body.parent_id || 0).run();
+    
+    return jsonResponse({ success: true, data: { id: (result.meta as any).last_row_id } });
+  } catch (err: any) {
+    return jsonResponse({ success: false, error: err.message }, 500);
+  }
+}
+
+async function handleUpdateNavMenu(request: Request, env: Env, id: number): Promise<Response> {
+  const body = await parseJson<any>(request);
+  if (!body) return jsonResponse({ success: false, error: '请求参数错误' }, 400);
+  
+  const existing = await env.DB.prepare('SELECT id FROM nav_menus WHERE id = ?').bind(id).first();
+  if (!existing) return jsonResponse({ success: false, error: '导航菜单不存在' }, 404);
+  
+  try {
+    const updates: string[] = [];
+    const values: any[] = [];
+    
+    for (const field of ['name', 'link', 'sort_order', 'status', 'parent_id']) {
+      if (body[field] !== undefined) {
+        updates.push(`${field} = ?`);
+        values.push(body[field]);
+      }
+    }
+    
+    if (updates.length > 0) {
+      values.push(id);
+      await env.DB.prepare(`UPDATE nav_menus SET ${updates.join(', ')} WHERE id = ?`).bind(...values).run();
+    }
+    
+    return jsonResponse({ success: true, data: { id } });
+  } catch (err: any) {
+    return jsonResponse({ success: false, error: err.message }, 500);
+  }
+}
+
+async function handleDeleteNavMenu(env: Env, id: number): Promise<Response> {
+  const existing = await env.DB.prepare('SELECT id FROM nav_menus WHERE id = ?').bind(id).first();
+  if (!existing) return jsonResponse({ success: false, error: '导航菜单不存在' }, 404);
+  
+  try {
+    await env.DB.prepare('DELETE FROM nav_menus WHERE id = ?').bind(id).run();
+    return jsonResponse({ success: true, data: { deleted: id } });
+  } catch (err: any) {
+    return jsonResponse({ success: false, error: err.message }, 500);
+  }
+}
+
+// ==================== 运营配置 - 首页推荐位 ====================
+async function handleGetBanners(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const all = url.searchParams.get('all') === '1';
+  
+  let query = 'SELECT id, title, image_url, link, sort_order, status, created_at FROM home_banners';
+  if (!all) query += ' WHERE status = 1';
+  query += ' ORDER BY sort_order ASC, id DESC';
+  
+  const result = await env.DB.prepare(query).all();
+  return jsonResponse({ success: true, data: result.results });
+}
+
+async function handleCreateBanner(request: Request, env: Env): Promise<Response> {
+  const body = await parseJson<any>(request);
+  if (!body?.title) {
+    return jsonResponse({ success: false, error: '标题不能为空' }, 400);
+  }
+  
+  try {
+    const maxSort = await env.DB.prepare('SELECT MAX(sort_order) as max_sort FROM home_banners').first() as any;
+    const sortOrder = body.sort_order ?? (maxSort?.max_sort || 0) + 1;
+    
+    const result = await env.DB.prepare(`
+      INSERT INTO home_banners (title, image_url, link, sort_order, status)
+      VALUES (?, ?, ?, ?, ?)
+    `).bind(body.title, body.image_url || '', body.link || '', sortOrder, body.status ?? 1).run();
+    
+    return jsonResponse({ success: true, data: { id: (result.meta as any).last_row_id } });
+  } catch (err: any) {
+    return jsonResponse({ success: false, error: err.message }, 500);
+  }
+}
+
+async function handleUpdateBanner(request: Request, env: Env, id: number): Promise<Response> {
+  const body = await parseJson<any>(request);
+  if (!body) return jsonResponse({ success: false, error: '请求参数错误' }, 400);
+  
+  const existing = await env.DB.prepare('SELECT id FROM home_banners WHERE id = ?').bind(id).first();
+  if (!existing) return jsonResponse({ success: false, error: '推荐位不存在' }, 404);
+  
+  try {
+    const updates: string[] = [];
+    const values: any[] = [];
+    
+    for (const field of ['title', 'image_url', 'link', 'sort_order', 'status']) {
+      if (body[field] !== undefined) {
+        updates.push(`${field} = ?`);
+        values.push(body[field]);
+      }
+    }
+    
+    if (updates.length > 0) {
+      values.push(id);
+      await env.DB.prepare(`UPDATE home_banners SET ${updates.join(', ')} WHERE id = ?`).bind(...values).run();
+    }
+    
+    return jsonResponse({ success: true, data: { id } });
+  } catch (err: any) {
+    return jsonResponse({ success: false, error: err.message }, 500);
+  }
+}
+
+async function handleDeleteBanner(env: Env, id: number): Promise<Response> {
+  const existing = await env.DB.prepare('SELECT id FROM home_banners WHERE id = ?').bind(id).first();
+  if (!existing) return jsonResponse({ success: false, error: '推荐位不存在' }, 404);
+  
+  try {
+    await env.DB.prepare('DELETE FROM home_banners WHERE id = ?').bind(id).run();
+    return jsonResponse({ success: true, data: { deleted: id } });
+  } catch (err: any) {
+    return jsonResponse({ success: false, error: err.message }, 500);
+  }
+}
+
+// ==================== 运营配置 - 网站设置 ====================
+async function handleGetSiteSettings(env: Env): Promise<Response> {
+  const result = await env.DB.prepare('SELECT setting_key, setting_value FROM site_settings').all();
+  
+  const settings: Record<string, string> = {};
+  result.results.forEach((item: any) => {
+    settings[item.setting_key] = item.setting_value;
+  });
+  
+  return jsonResponse({ success: true, data: settings });
+}
+
+async function handleUpdateSiteSettings(request: Request, env: Env): Promise<Response> {
+  const body = await parseJson<any>(request);
+  if (!body) return jsonResponse({ success: false, error: '请求参数错误' }, 400);
+  
+  try {
+    for (const [key, value] of Object.entries(body)) {
+      if (typeof key === 'string') {
+        const existing = await env.DB.prepare('SELECT id FROM site_settings WHERE setting_key = ?').bind(key).first();
+        if (existing) {
+          await env.DB.prepare('UPDATE site_settings SET setting_value = ?, updated_at = datetime(\'now\') WHERE setting_key = ?')
+            .bind(String(value || ''), key).run();
+        } else {
+          await env.DB.prepare('INSERT INTO site_settings (setting_key, setting_value) VALUES (?, ?)')
+            .bind(key, String(value || '')).run();
+        }
+      }
+    }
+    
+    return jsonResponse({ success: true, data: { updated: true } });
+  } catch (err: any) {
+    return jsonResponse({ success: false, error: err.message }, 500);
+  }
+}
+
+// ==================== 效率工具 - 数据备份 ====================
+async function handleExportBackup(env: Env): Promise<Response> {
+  try {
+    const tables = [
+      'cuisines', 'tags', 'regions', 'methods',
+      'recipes', 'recipe_ingredients', 'recipe_steps', 
+      'recipe_tags', 'recipe_methods', 'recipe_regions',
+      'knowledge_entries', 'ingredients',
+      'friend_links', 'nav_menus', 'home_banners', 'site_settings'
+    ];
+    
+    const data: Record<string, any[]> = {};
+    
+    for (const table of tables) {
+      const result = await env.DB.prepare(`SELECT * FROM ${table}`).all();
+      data[table] = result.results;
+    }
+    
+    const backup = {
+      version: '1.0',
+      export_time: new Date().toISOString(),
+      tables: data
+    };
+    
+    return new Response(JSON.stringify(backup, null, 2), {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Disposition': 'attachment; filename="chanmaoyoupu_backup_' + Date.now() + '.json"',
+        'Access-Control-Allow-Origin': '*',
+      },
+    });
+  } catch (err: any) {
+    return jsonResponse({ success: false, error: err.message }, 500);
+  }
+}
+
 // ==================== 路由分发 ====================
 export async function handleAdminRequest(path: string, request: Request, env: Env): Promise<Response | null> {
   // 只处理 /api/admin/ 开头的路由
@@ -1197,6 +1495,64 @@ export async function handleAdminRequest(path: string, request: Request, env: En
   const userRoleMatch = path.match(/^\/api\/admin\/users\/(\d+)\/role$/);
   if (userRoleMatch && request.method === 'PUT') {
     return await handleUpdateUserRole(request, env, parseInt(userRoleMatch[1]));
+  }
+  
+  // 友情链接
+  if (path === '/api/admin/friend-links' && request.method === 'GET') {
+    return await handleGetFriendLinks(request, env);
+  }
+  if (path === '/api/admin/friend-links' && request.method === 'POST') {
+    return await handleCreateFriendLink(request, env);
+  }
+  const friendLinkMatch = path.match(/^\/api\/admin\/friend-links\/(\d+)$/);
+  if (friendLinkMatch && request.method === 'PUT') {
+    return await handleUpdateFriendLink(request, env, parseInt(friendLinkMatch[1]));
+  }
+  if (friendLinkMatch && request.method === 'DELETE') {
+    return await handleDeleteFriendLink(env, parseInt(friendLinkMatch[1]));
+  }
+  
+  // 导航菜单
+  if (path === '/api/admin/nav-menus' && request.method === 'GET') {
+    return await handleGetNavMenus(request, env);
+  }
+  if (path === '/api/admin/nav-menus' && request.method === 'POST') {
+    return await handleCreateNavMenu(request, env);
+  }
+  const navMenuMatch = path.match(/^\/api\/admin\/nav-menus\/(\d+)$/);
+  if (navMenuMatch && request.method === 'PUT') {
+    return await handleUpdateNavMenu(request, env, parseInt(navMenuMatch[1]));
+  }
+  if (navMenuMatch && request.method === 'DELETE') {
+    return await handleDeleteNavMenu(env, parseInt(navMenuMatch[1]));
+  }
+  
+  // 首页推荐位
+  if (path === '/api/admin/banners' && request.method === 'GET') {
+    return await handleGetBanners(request, env);
+  }
+  if (path === '/api/admin/banners' && request.method === 'POST') {
+    return await handleCreateBanner(request, env);
+  }
+  const bannerMatch = path.match(/^\/api\/admin\/banners\/(\d+)$/);
+  if (bannerMatch && request.method === 'PUT') {
+    return await handleUpdateBanner(request, env, parseInt(bannerMatch[1]));
+  }
+  if (bannerMatch && request.method === 'DELETE') {
+    return await handleDeleteBanner(env, parseInt(bannerMatch[1]));
+  }
+  
+  // 网站设置
+  if (path === '/api/admin/settings/site' && request.method === 'GET') {
+    return await handleGetSiteSettings(env);
+  }
+  if (path === '/api/admin/settings/site' && request.method === 'PUT') {
+    return await handleUpdateSiteSettings(request, env);
+  }
+  
+  // 数据备份
+  if (path === '/api/admin/backup/export' && request.method === 'GET') {
+    return await handleExportBackup(env);
   }
   
   // 未匹配到路由

@@ -48,6 +48,19 @@ async function createTables(env: Env): Promise<void> {
   await runSQL(env, "CREATE INDEX IF NOT EXISTS idx_ingredients_category ON ingredients(category)");
   await runSQL(env, "CREATE INDEX IF NOT EXISTS idx_knowledge_slug ON knowledge_entries(slug)");
   await runSQL(env, "CREATE INDEX IF NOT EXISTS idx_knowledge_category ON knowledge_entries(category)");
+  
+  // 运营配置相关表
+  await runSQL(env, "CREATE TABLE IF NOT EXISTS friend_links (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, url TEXT NOT NULL, logo TEXT DEFAULT '', description TEXT DEFAULT '', sort_order INTEGER DEFAULT 0, status INTEGER DEFAULT 1, created_at TEXT DEFAULT (datetime('now')))");
+  await runSQL(env, "CREATE INDEX IF NOT EXISTS idx_fl_status ON friend_links(status)");
+  
+  await runSQL(env, "CREATE TABLE IF NOT EXISTS nav_menus (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, link TEXT NOT NULL, sort_order INTEGER DEFAULT 0, status INTEGER DEFAULT 1, parent_id INTEGER DEFAULT 0, created_at TEXT DEFAULT (datetime('now')))");
+  await runSQL(env, "CREATE INDEX IF NOT EXISTS idx_nav_status ON nav_menus(status)");
+  
+  await runSQL(env, "CREATE TABLE IF NOT EXISTS home_banners (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, image_url TEXT DEFAULT '', link TEXT DEFAULT '', sort_order INTEGER DEFAULT 0, status INTEGER DEFAULT 1, created_at TEXT DEFAULT (datetime('now')))");
+  await runSQL(env, "CREATE INDEX IF NOT EXISTS idx_banner_status ON home_banners(status)");
+  
+  await runSQL(env, "CREATE TABLE IF NOT EXISTS site_settings (id INTEGER PRIMARY KEY AUTOINCREMENT, setting_key TEXT UNIQUE NOT NULL, setting_value TEXT DEFAULT '', created_at TEXT DEFAULT (datetime('now')), updated_at TEXT DEFAULT (datetime('now')))");
+  await runSQL(env, "CREATE INDEX IF NOT EXISTS idx_settings_key ON site_settings(setting_key)");
 }
 
 export async function handleAdminInit(request: Request, env: Env): Promise<Response> {
