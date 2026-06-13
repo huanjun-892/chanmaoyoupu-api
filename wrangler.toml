@@ -2,14 +2,22 @@ name = "chanmaoyoupu-api"
 main = "src/index.ts"
 compatibility_date = "2024-01-01"
 
-[env.production]
-name = "chanmaoyoupu-api"
-route = { pattern = "api.chanmaoyoupu.com", zone_name = "chanmaoyoupu.com" }
-
 [[d1_databases]]
 binding = "DB"
 database_name = "chanmaoyoupu"
 database_id = "d798b070-8a77-4b5b-a0d4-95cd8f57992e"
 
 [vars]
+ADMIN_SECRET = "cmpy2024secret"
+
+[env.production]
+name = "chanmaoyoupu-api"
+route = { pattern = "api.chanmaoyoupu.com", zone_name = "chanmaoyoupu.com" }
+
+[[env.production.d1_databases]]
+binding = "DB"
+database_name = "chanmaoyoupu"
+database_id = "d798b070-8a77-4b5b-a0d4-95cd8f57992e"
+
+[env.production.vars]
 ADMIN_SECRET = "cmpy2024secret"

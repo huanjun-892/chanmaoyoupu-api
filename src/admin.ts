@@ -1340,6 +1340,34 @@ async function handleExportBackup(env: Env): Promise<Response> {
   }
 }
 
+// ==================== 触发网站重建 ====================
+async function handleTriggerDeploy(env: Env): Promise<Response> {
+  try {
+    const deployHookUrl = (env as any).DEPLOY_HOOK_URL;
+    if (!deployHookUrl) {
+      return jsonResponse({ success: false, error: 'DEPLOY_HOOK_URL 未配置，请先在 wrangler.toml 中设置环境变量' }, 400);
+    }
+
+    const response = await fetch(deployHookUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({}),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      return jsonResponse({ success: false, error: `触发失败: ${response.status} ${errorText}` }, 500);
+    }
+
+    const result = await response.json().catch(() => ({}));
+    return jsonResponse({ success: true, data: { message: '网站重建已触发，预计1-2分钟后生效', result } });
+  } catch (err: any) {
+    return jsonResponse({ success: false, error: err.message }, 500);
+  }
+}
+
 // ==================== 路由分发 ====================
 export async function handleAdminRequest(path: string, request: Request, env: Env): Promise<Response | null> {
   // 只处理 /api/admin/ 开头的路由
@@ -1553,6 +1581,11 @@ export async function handleAdminRequest(path: string, request: Request, env: En
   // 数据备份
   if (path === '/api/admin/backup/export' && request.method === 'GET') {
     return await handleExportBackup(env);
+  }
+
+  // 触发网站重建（Cloudflare Pages Deploy Hook）
+  if (path === '/api/admin/deploy' && request.method === 'POST') {
+    return await handleTriggerDeploy(env);
   }
   
   // 未匹配到路由
