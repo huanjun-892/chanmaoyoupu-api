@@ -21,3 +21,4 @@ database_id = "d798b070-8a77-4b5b-a0d4-95cd8f57992e"
 
 [env.production.vars]
 ADMIN_SECRET = "cmpy2024secret"
+DEPLOY_HOOK_URL = "https://api.cloudflare.com/client/v4/pages/webhooks/deploy_hooks/7bafc2a9-e22f-4c93-9cc6-c2e11f1e4116"
