@@ -131,13 +131,32 @@ async function buildRecipeObject(env: Env, recipe: any): Promise<any> {
   };
 }
 
-async function handleGetRecipes(env: Env): Promise<Response> {
+async function handleGetRecipes(env: Env, request: Request): Promise<Response> {
+  const url = new URL(request.url);
+  const page = parseInt(url.searchParams.get('page') || '1');
+  const limit = parseInt(url.searchParams.get('limit') || '20');
+  const offset = (page - 1) * limit;
+  
+  // 先获取总数
+  const { total } = await env.DB.prepare(
+    'SELECT COUNT(*) as total FROM recipes WHERE published = 1'
+  ).first() as { total: number };
+  
   const results = await env.DB.prepare(
-    'SELECT id, title, slug, description, difficulty, cook_time, servings, calories, cuisine_id, cover_url, nutrition, common_mistakes, success_tips, ingredient_substitutes, suitable_for, required_tools FROM recipes WHERE published = 1 ORDER BY id DESC'
-  ).all();
+    'SELECT id, title, slug, description, difficulty, cook_time, servings, calories, cuisine_id, cover_url, nutrition, common_mistakes, success_tips, ingredient_substitutes, suitable_for, required_tools FROM recipes WHERE published = 1 ORDER BY id DESC LIMIT ? OFFSET ?'
+  ).bind(limit, offset).all();
   
   const items = await Promise.all(results.results.map((r: any) => buildRecipeObject(env, r)));
-  return jsonResponse({ success: true, data: items });
+  return jsonResponse({ 
+    success: true, 
+    data: {
+      items,
+      total,
+      page,
+      limit,
+      pages: Math.ceil(total / limit)
+    }
+  });
 }
 
 async function handleGetRecipeBySlug(env: Env, slug: string): Promise<Response> {
@@ -216,7 +235,7 @@ export async function handleContentRequest(path: string, request: Request, env: 
   
   // GET /api/content/recipes
   if (path === '/api/content/recipes' && request.method === 'GET') {
-    return await handleGetRecipes(env);
+    return await handleGetRecipes(env, request);
   }
   // GET /api/content/recipes/:slug
   const recipeMatch = path.match(/^\/api\/content\/recipes\/([^/]+)$/);
